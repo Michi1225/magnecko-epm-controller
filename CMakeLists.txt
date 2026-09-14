@@ -85,3 +85,25 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
     # Add user defined libraries
 )
+
+set(EPM_NUMBER 3 CACHE STRING "EPM hardware number")
+set(VERSION_HEADER_DIR "${CMAKE_BINARY_DIR}/generated")
+set(VERSION_HEADER "${VERSION_HEADER_DIR}/version.h")
+
+file(MAKE_DIRECTORY "${VERSION_HEADER_DIR}")
+
+add_custom_target(generate_version_header ALL
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+        -DOUTPUT_FILE=${VERSION_HEADER}
+        -DEPM_NUMBER=${EPM_NUMBER}
+        -P ${CMAKE_SOURCE_DIR}/cmake/GenerateVersion.cmake
+    BYPRODUCTS "${VERSION_HEADER}"
+    COMMENT "Generating version.h"
+)
+
+add_dependencies(${PROJECT_NAME} generate_version_header)
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+    "${VERSION_HEADER_DIR}"
+)

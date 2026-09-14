@@ -98,6 +98,10 @@ void FootController::init()
     HAL_GPIO_WritePin(nRST_ECAT_GPIO_Port, nRST_ECAT_Pin, GPIO_PIN_SET);
     while(!HAL_GPIO_ReadPin(EEPROM_LOADED_GPIO_Port, EEPROM_LOADED_Pin)){} //Wait for EEPROM to be loaded
     ecat_slv_init(&this->config);
+
+    // Temporarily store the git version in the Force_Estimate_Params array for debugging purposes
+    const char* version = GIT_VERSION;
+    memcpy(Obj.Force_Estimate_Params, version, strlen(version) + 1);
     Obj.EPM_Number = EPM_NUMBER; // EPM number, needed for hw interface
 
 

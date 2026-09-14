@@ -12,6 +12,7 @@
 #include "Charger.h"
 #include "eeprom.h"
 #include <deque>
+#include "version.h"
 extern "C" {
     #include "ecat_slv.h"
     #include "utypes.h"
@@ -30,7 +31,9 @@ extern "C" {
 
 #define FORCE_ESTIMATE_WINDOW_SIZE 20
 
+#ifndef EPM_NUMBER
 #define EPM_NUMBER 1 // EPM number, needed for hw interface
+#endif
 
 #define USE_BATTERIES
 
