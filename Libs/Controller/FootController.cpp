@@ -330,15 +330,28 @@ FSMStatus FootController::FSM_bg(FSMStatus state, uint16_t &status_word, int8_t 
         status_word |= FSMStatusWord::WARNING_STATUS;
         warning_active = true;
 
-    }else if (temperature >= 80.0f) // Over temperature fault, trigger warning
+    }else // Temperature sensor connected
+    {
+        if (temperature >= 80.0f) // Over temperature fault, trigger fault
     {
         this->controller_error_word.over_temperature_fault = 1;
         Obj.Error_Code = static_cast<uint16_t>(ErrorCodes::OVER_TEMPERATURE);
         status_word |= FSMStatusWord::FAULT_STATUS;
         this->fsm_.triggerFaultReaction(ErrorCodes::OVER_TEMPERATURE);
         warning_active = true;
+        }else if (temperature <= 50.0f && this->controller_error_word.over_temperature_fault) // Clear over temperature fault if temperature drops below 50C
+        {
+            this->controller_error_word.over_temperature_fault = 0; // Clear over temperature fault
+            Obj.Error_Code &= ~static_cast<uint16_t>(ErrorCodes::OVER_TEMPERATURE); // Clear error code
+        }else if (temperature >= 65.0f) // Warning threshold for temperature, trigger warning
+        {
+            this->controller_error_word.over_temperature_fault = 0; // Clear over temperature fault
+            Obj.Error_Code = static_cast<uint16_t>(ErrorCodes::OVER_TEMPERATURE);
+            status_word |= FSMStatusWord::WARNING_STATUS;
+            warning_active = true;
+        }
+        Obj.Temperature = 100 * temperature;
     }
-    else Obj.Temperature = 100 * temperature;
 
     // Timer Initialization Failure
     if(this->controller_error_word.timer_init_failed)
