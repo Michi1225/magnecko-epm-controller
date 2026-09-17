@@ -40,6 +40,24 @@ constexpr uint8_t LDC1101_ADDR_LHR_STATUS           = 0x3B;
 constexpr uint8_t LDC1101_ADDR_RID                  = 0x3E;
 constexpr uint8_t LDC1101_ADDR_CHIP_ID              = 0x3F;
 
+
+constexpr uint8_t  SOD_FAST_SHIFT       = 2;
+constexpr uint8_t  SOD_SLOW_SHIFT       = 5;
+constexpr uint8_t  SOD_PERSISTENCE      = 3;
+constexpr uint16_t SOD_EDGE_THRESHOLD   = 200;
+
+class SlipDetector
+{
+public:
+    bool update(int32_t x);
+
+    bool slip_detected() const { return slip_detected_; }
+
+private:
+    int32_t fast_, slow_;
+    bool initialized_, slip_detected_ = false;
+};
+
 class LDC1101 {
 private:
     GPIO_TypeDef* cs_port;
@@ -54,6 +72,8 @@ public:
     }rx_data;
 
     LDC1101 *next;
+
+    SlipDetector slip_detector;
 
     bool data_valid = false;
     

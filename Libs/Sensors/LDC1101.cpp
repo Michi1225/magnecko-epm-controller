@@ -173,3 +173,21 @@ void LDC1101::read_data()
 }
 
 
+
+
+bool SlipDetector::update(int32_t x)
+{
+    if (!initialized_)
+    {
+        fast_ = slow_ = x;
+        initialized_ = true;
+        return false;
+    }
+
+    fast_ += (x - fast_) >> SOD_FAST_SHIFT;
+    slow_ += (x - slow_) >> SOD_SLOW_SHIFT;
+
+    int32_t diff = fast_ - slow_;
+    slip_detected_ = (diff > SOD_EDGE_THRESHOLD);
+    return slip_detected_;
+}

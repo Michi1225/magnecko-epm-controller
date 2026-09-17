@@ -362,6 +362,7 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
         HAL_GPIO_WritePin(LDC2_NCS_GPIO_Port, LDC2_NCS_Pin, GPIO_PIN_SET);
         HAL_GPIO_WritePin(LDC3_NCS_GPIO_Port, LDC3_NCS_Pin, GPIO_PIN_SET);
         controller.active_ldc->data_valid = true; // Set the data_valid flag for the currently active LDC
+        controller.active_ldc->slip_detector.update(controller.active_ldc->rx_data.rp_data); // Update slip detection for the currently active LDC
         controller.active_ldc = controller.active_ldc->next; // Move to the next LDC for the next measurement
     }
     else if (hspi == TOF_SPI_HANDLE)

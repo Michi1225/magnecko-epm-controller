@@ -166,6 +166,7 @@ public:
     TMAG5273 hall3 = TMAG5273(TMAG5273::D1);
     uint8_t contact_estimation = 0;
     std::deque<float> force_average;
+    bool slip_detected = false;
 
 
     //TOF

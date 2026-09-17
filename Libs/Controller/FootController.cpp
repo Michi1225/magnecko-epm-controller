@@ -206,6 +206,7 @@ void FootController::magnetize(uint16_t time)
         TIM_DRV2->Instance->CR1 |= TIM_CR1_CEN; // Start Timer
         this->status_magnetization = true;
         HAL_GPIO_WritePin(MAG_STAT_GPIO_Port, MAG_STAT_Pin, GPIO_PIN_SET); //Set Magnetization Status to 1
+        this->slip_detected = false; //Reset slip detection flag
     }else if(!this->requested_magnetization && this->requested_demagnetization)
     {
         // Demagnetization was requested
@@ -333,12 +334,12 @@ FSMStatus FootController::FSM_bg(FSMStatus state, uint16_t &status_word, int8_t 
     }else // Temperature sensor connected
     {
         if (temperature >= 80.0f) // Over temperature fault, trigger fault
-    {
-        this->controller_error_word.over_temperature_fault = 1;
-        Obj.Error_Code = static_cast<uint16_t>(ErrorCodes::OVER_TEMPERATURE);
-        status_word |= FSMStatusWord::FAULT_STATUS;
-        this->fsm_.triggerFaultReaction(ErrorCodes::OVER_TEMPERATURE);
-        warning_active = true;
+        {
+            this->controller_error_word.over_temperature_fault = 1;
+            Obj.Error_Code = static_cast<uint16_t>(ErrorCodes::OVER_TEMPERATURE);
+            status_word |= FSMStatusWord::FAULT_STATUS;
+            this->fsm_.triggerFaultReaction(ErrorCodes::OVER_TEMPERATURE);
+            warning_active = true;
         }else if (temperature <= 50.0f && this->controller_error_word.over_temperature_fault) // Clear over temperature fault if temperature drops below 50C
         {
             this->controller_error_word.over_temperature_fault = 0; // Clear over temperature fault
@@ -390,10 +391,12 @@ FSMStatus FootController::FSM_bg(FSMStatus state, uint16_t &status_word, int8_t 
 
 
     // LDC
+    uint8_t slip_off_votes = 0;
     for(int i = 0; i < 4; i++)
     {
         Obj.LDC_Frequency[i] = this->ldc[i].rx_data.l_data;
         Obj.LDC_RP[i] = this->ldc[i].rx_data.rp_data;
+        slip_off_votes += this->ldc[i].slip_detector.slip_detected() ? 1 : 0; // Count the number of LDCs that detect slip
     }
 
     // Hall Sensors
@@ -420,7 +423,9 @@ FSMStatus FootController::FSM_bg(FSMStatus state, uint16_t &status_word, int8_t 
     {
         mag_force_average_sum += val;
     }
-    Obj.Force_Estimate = mag_force_average_sum / this->force_average.size();
+
+    Obj.Force_Estimate = mag_force_average_sum / this->force_average.size() * (slip_off_votes < 3 ? 1.0f : 0.0f);
+    //TODO: Implement slip detection for improved force estimation
 
     // Capacitor Voltage
     Obj.Capacitor_Voltage = this->charger.status.vout_10mV;
