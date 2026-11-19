@@ -1,5 +1,7 @@
 - [Home](Home.md)
 - [Architecture](Architecture.md)
+- [RTOS runtime](RTOS.md)
+- [Change log](../CHANGELOG.md)
 - [Build and flash](Build-and-Flash.md)
 - [Hardware](Hardware.md)
 - [EtherCAT interface](EtherCAT-Interface.md)

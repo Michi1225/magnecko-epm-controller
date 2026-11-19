@@ -6,14 +6,14 @@
 
 | Component | Acquisition | Export |
 | --- | --- | --- |
-| BNO086 | SPI3; interrupt counts pending reports; TIM4 services at nominal 400 Hz | Raw signed 16-bit gyro XYZ, linear acceleration XYZ, quaternion RIJK |
-| TMF8829 | SPI1; startup loads/configures sensor; interrupt-clear completion starts ranging read | 64 distances and 64 SNR values |
-| Four LDC1101 | SPI2; one device started per 1 kHz control tick, completion advances circular list | Four raw `l_data` and four `rp_data` values |
-| Four TMAG5273 | I2C2; foreground reads sensors 3, 2, 1, 0 using DMA and waits for completion | Raw signed XYZ registers and internal converted magnitudes |
+| BNO086 | SPI3; data-ready wakes IMU task; complete packets are serialized | Raw signed 16-bit gyro XYZ, linear acceleration XYZ, quaternion RIJK |
+| TMF8829 | SPI1; ToF task waits for interrupt-clear and ranging-read completion | 64 distances and 64 SNR values |
+| Four LDC1101 | SPI2; acquisition task reads one device per completed iteration targeting 1 kHz | Four raw `l_data` and four `rp_data` values |
+| Four TMAG5273 | I2C2; acquisition task reads 3,2,1,0 using DMA completion notifications | Raw signed XYZ registers and internal converted magnitudes |
 | PT1000 temperature input | ADC1 calibration and continuous DMA sample with lookup table | Signed temperature multiplied by 100 |
-| Charger | SPI6 interrupt transfers, only when initialized | Output voltage in units of 10 mV |
+| Charger | SPI6 BDMA transfers in services, only when initialized | Output voltage in units of 10 mV |
 
-The background action copies the latest available sensor storage into `Obj`; it does not attach timestamps or per-sample validity bits to the PDOs. A 1 kHz PDO update does not imply fresh IMU, ToF, or Hall data at 1 kHz. Failed/stalled acquisition may leave old or zero values.
+The background action copies complete queued sensor snapshots into `Obj`; it does not attach timestamps or per-sample validity bits to the PDOs. A 1 kHz PDO update does not imply fresh IMU, ToF, or Hall data at 1 kHz. Failed/stalled acquisition may leave old or zero values; internal freshness checks raise warning/SDO error `0xFF19`. See [RTOS runtime](RTOS.md) for age limits.
 
 ## IMU representation
 
@@ -67,10 +67,10 @@ slip_detected = (fast - slow) > 200
 
 Three or four positive channel votes suppress `Obj.Force_Estimate`. Detection does not command demagnetization or alter the FSM. `SOD_PERSISTENCE` is declared but unused; no persistence count is implemented. The separate `FootController::slip_detected` member is reset on magnetization but is not the source of the per-LDC votes.
 
-The filter state is not reset explicitly when magnetizing. Some internal filter members lack explicit initialization, and the containing controller uses a `NOLOAD` section; initialization deserves review before relying on this detection across startup conditions.
+The filter state is not reset explicitly when magnetizing. Its members are explicitly initialized; startup zeros the containing `NOLOAD` storage before construction.
 
 ## Charger behavior
 
-[`Charger.cpp`](../Libs/Controller/Charger.cpp) exchanges packed enable/fault-clear commands and readiness, activity, OC/OV/watchdog flags, input/output voltages, current, and CRC. Invalid receive CRC clears the status structure. `transmit_receive()` does nothing until initialization succeeds and skips a busy SPI peripheral.
+[`Charger.cpp`](../Libs/Controller/Charger.cpp) exchanges packed enable/fault-clear commands and readiness, activity, OC/OV/watchdog flags, input/output voltages, current, and CRC. Services snapshots the desired command into a separate D3 wire buffer, waits for BDMA, and checks CRC before publishing status. A failed transfer/CRC marks the sample invalid and retains the last good status. `transmit_receive()` does nothing until initialization succeeds.
 
-With the current `USE_BATTERIES` definition, `wait_ready()` is skipped, `initialized` stays false, and periodic charger communication is inactive. Capacitor voltage then remains at its initial zero rather than representing a measured empty capacitor.
+With default `EPM_USE_BATTERIES=ON`, `wait_ready()` is skipped, `initialized` stays false, and periodic charger communication is inactive. Capacitor voltage then remains at its initial zero rather than representing a measured empty capacitor.

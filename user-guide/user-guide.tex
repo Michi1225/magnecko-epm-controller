@@ -27,10 +27,10 @@
 \definecolor{MGSGray}{HTML}{F0F3F5}
 \color{MGSInk}
 \newcommand{\ProductName}{Magnecko EPM Controller}
-\newcommand{\SourceBaseline}{105e29d}
+\newcommand{\SourceBaseline}{105e29d + RTOS migration}
 \newcommand{\DocumentID}{EPM-UG-001}
-\newcommand{\DocumentRevision}{A}
-\newcommand{\DocumentDate}{October 2026}
+\newcommand{\DocumentRevision}{B}
+\newcommand{\DocumentDate}{November 2026}
 \hypersetup{colorlinks=true,linkcolor=MGSRed,urlcolor=MGSRed,
   pdftitle={Magnecko EPM Controller -- User Guide and Reference Manual},
   pdfauthor={Magnecko},bookmarksnumbered=true,bookmarksopen=false}
@@ -127,9 +127,9 @@ or integrator with access to the board design and an EtherCAT master.
 
 \textbf{Commissioning status.} The checked-in EtherCAT XML describes an
 older actuator interface and does not match the compiled EPM dictionary.
-A clean firmware build with ARM GCC 14.3.1 also fails on an existing SPI
-receive-buffer pointer mismatch. Resolve those issues before commissioning
-a newly built image or master configuration. This guide does not claim a
+The FreeRTOS migration has been built with ARM GCC 13.3.1 and 14.3.1.
+Reconcile the EtherCAT artifacts and complete the RTOS bench validation before
+commissioning a newly built image or master configuration. This guide does not claim a
 successful hardware validation.
 
 
@@ -146,10 +146,11 @@ charger interface is present, but the current source selects battery mode
 and skips charger initialization.
 
 The project name in the build system remains
-\code{MagneckoFoot_Header}. The application runs without an RTOS:
-the control and communication work runs at a nominal 1\,kHz in TIM2,
-IMU service at 400\,Hz in TIM4, and Hall measurements in the foreground
-loop. Telemetry may contain the latest stored sample rather than a new
+\code{MagneckoFoot_Header}. FreeRTOS schedules five application tasks.
+TIM2 releases control/communication and acquisition at nominal 1\,kHz;
+IMU and ToF service is event-driven. TIM7 supplies independent HAL milliseconds.
+Pulse edges remain hardware-timed. See \path{wiki/RTOS.md} for task ownership,
+stacks, timeouts and the commissioning test plan. Telemetry may contain the latest stored sample rather than a new
 measurement on every EtherCAT cycle.
 
 \section{What this repository supplies}
@@ -190,9 +191,7 @@ connected through the board's SWD interface. Operation requires a
 compatible EtherCAT master and a corrected device/process configuration.
 
 The toolchain targets Cortex-M7 with hard-float \code{fpv5-d16}. C is
-configured as C11. C++ source uses C++17 constructs, although the build
-does not explicitly select a C++ standard. Use a compiler whose default
-supports those constructs. C++ exceptions and RTTI are disabled.
+configured as C11, and C++17 is selected explicitly. C++ exceptions and RTTI are disabled.
 
 The CubeMX project identifies \code{STM32H725VGH6}; the checked-in
 VS Code debugger configuration names \code{STM32H725RGVx}. Verify the
@@ -250,12 +249,13 @@ cmake --preset Release -DEPM_NUMBER=3
 cmake --build --preset Release --parallel
 \end{verbatim}
 
-\textbf{Existing build issue.} A clean Debug configure with ARM GCC
-14.3.1 succeeded during documentation checks, but compilation failed in
-\path{Libs/SOES_Wrapper/hal/esc_hw.c}, at the SPI call in
-\code{esc_address()}. The receive argument \code{&ESCvar.ALevent} does
-not have the byte-pointer type HAL expects. This requires a reviewed
-firmware correction; the documentation leaves source behavior unchanged.
+\textbf{Toolchain validation.} The original firmware builds with the editor
+configuration's GCC 13.3.1. The migration corrects an SPI pointer-type mismatch
+rejected by GCC 14.3.1, and has been built with both versions. FreeRTOS V11.2.0
+is vendored, so building needs no kernel download. Configure with
+\code{-DEPM_USE_BATTERIES=OFF} to build the optional charger/BDMA path.
+Host tests, ELF checks and the remaining bench tests are listed in
+\path{wiki/RTOS.md} and \path{CHANGELOG.md}.
 
 \section{Program a successfully built image}
 
@@ -465,8 +465,8 @@ exchange(control=0x000F, mode=0, magnet=0x00)
 \section{Physical button}
 
 Pressing the active-low button starts a timer. Releasing it stops the
-timer. Holding it for about one second directly attempts a
-demagnetization pulse. This path bypasses the application's
+timer. Holding it for about one second posts a request to the control task
+to attempt a demagnetization pulse. This path bypasses the application's
 operation-enabled state check but still respects pulse limits, dead
 time, and the overtemperature flag.
 
@@ -536,13 +536,15 @@ specific foot and surface before making load decisions.
 
 Capacitor voltage at \code{0x60D0:00} is in 10\,mV counts when a
 charger has initialized and communicates successfully. The default
-\code{USE_BATTERIES} definition skips that initialization, leaving the
+\code{EPM_USE_BATTERIES=ON} configuration skips that initialization, leaving the
 value at zero. Zero in this configuration is not a measured
 discharged condition.
 
 Sensor PDOs have no timestamps or per-sample validity bits. Failed
 or stalled acquisition may leave old or zero values. Observe both
 sensor behavior and diagnostics when checking a newly connected board.
+Missing, invalid or stale sensor groups raise warning/SDO error \code{0xFF19}
+when another warning has not taken precedence.
 
 \chapter{Disable and shut down}
 
@@ -559,11 +561,11 @@ Control word \code{0x0007} disables operation into switched-on;
 with masked status \code{0x0017}. The quick-stop action is empty.
 Those state changes do not issue a demagnetization pulse.
 
-The SOES software watchdog has a nominal 100-call interval, about
-100\,ms at the intended polling rate. It can move EtherCAT to an
-error state, but no application safe-output hook is installed.
-Loss of EtherCAT, quick stop, disable, or MCU reset must not be
-assumed to cause magnetic release or an application discharge action.
+The SOES watchdog accounts for elapsed HAL milliseconds with a 100\,ms
+reload. Its safe-output hook clears network commands, disables desired charging
+and asserts discharge when process outputs stop. It never issues a release
+pulse. Loss of EtherCAT, quick stop, disable, or MCU reset must not be assumed
+to cause magnetic release.
 
 \chapter{Warnings, faults, and recovery}
 \label{sec:faults}
@@ -581,8 +583,10 @@ the 65--80\,$^{\circ}$C warning branch. Do not assume reliable
 \section{Fatal handler}
 
 The fault-reaction action calls \code{Error_Handler()}. It stops pulse
-outputs, asserts discharge, disables the charger command, attempts a
-charger exchange, disables interrupts, and halts indefinitely. The
+outputs, disables gate drivers, asserts discharge, clears the charger command,
+disables interrupts, and halts indefinitely without bus or scheduler waits.
+A control-cycle heartbeat older than 100\,ms also enters this path;
+this timer-based monitor is not an independent hardware watchdog. The
 last fault status may not reach the master before communication stops.
 
 Correct the cause and reset or power-cycle the controller. Although
@@ -615,6 +619,7 @@ Code & Meaning \\
 \code{0xFF16} & Temperature sensor disconnected or out of range \\
 \code{0xFF17} & Gate-driver fault while enabled \\
 \code{0xFF18} & Invalid simultaneous requests seen by the operation action \\
+\code{0xFF19} & Missing, invalid or stale sensor group; existing warnings may take precedence \\
 \bottomrule
 \end{longtable}
 
@@ -626,7 +631,8 @@ in the input callback, so it need not produce \code{0xFF18}.
 
 Initialization selects an alternating blue/green pattern, followed by
 cyan. Entry to switched-on selects all channels on; operation-enabled
-selects solid green. A fatal error selects fast red blinking.
+selects solid green. Fatal handling avoids I2C writes, so fast red blinking
+is not guaranteed on a fatal halt.
 Sensor-specific animations exist in the driver, but the current
 initialization-warning path does not select them. Green is therefore
 not proof that every sensor initialized correctly.
@@ -635,11 +641,10 @@ not proof that every sensor initialized correctly.
 
 \section{Settings that require source changes}
 
-\code{EPM_NUMBER} is a CMake cache setting. Battery mode,
+\code{EPM_NUMBER} and \code{EPM_USE_BATTERIES} are CMake cache settings.
+Configure \code{-DEPM_USE_BATTERIES=OFF} to enable charger initialization.
 \code{MAGNETIZATION_TIME}, \code{DEAD_TIME}, force-model coefficients,
-temperature type, and temperature thresholds are source-level settings.
-Passing \code{-DUSE_BATTERIES=OFF} to CMake does not remove the
-unconditional header definition.
+temperature type and temperature thresholds remain source-level settings.
 
 The following writable SDOs currently provide storage with limited
 effects:
@@ -669,33 +674,41 @@ Symptom & Check \\
 \midrule
 \endhead
 Missing SOES sources & Initialize the Git submodule and verify SSH access or a local HTTPS override. \\
-SPI compile error with GCC 14 & Existing receive-buffer pointer mismatch in \code{esc_address()}; see Chapter~\ref{sec:build}. \\
-Configuration pattern never finishes & Inspect \code{EEPROM_LOADED}, ESC reset, and power; startup has no readiness timeout. \\
+SPI compile error with GCC 14 & Check for a pre-migration checkout; the current transport builds with GCC 14. \\
+Configuration pattern never finishes & Inspect \code{EEPROM_LOADED}, ESC reset, and power; readiness and DL-status polling have 2\,s bounds. \\
 Master mapping does not match & Reconcile XML, compiled dictionary, and actual SII before commissioning. \\
 OP reached but no magnet pulse & Check application state, command edge, lockout, operation-entry timing, and temperature flags. \\
 Repeated request ignored & Send zero and allow it to be processed before a new rising edge. \\
 Force estimate zero & Inspect magnet flag, Hall data/initialization, and three-of-four LDC slip votes. \\
 Capacitor voltage zero & Default battery mode does not initialize charger telemetry. \\
 Temperature or sensor value stale & Check error code and driver/interrupt state; PDOs have no freshness flags. \\
-Red blinking, no communication & Fatal halt; correct the cause and reset. The manual button cannot run while halted. \\
+Outputs disabled, no communication & Fatal halt; correct cause and reset. A red LED update is not guaranteed; the manual button cannot run while halted. \\
 \bottomrule
 \end{longtable}
 
 \section{Implementation issues for integrators}
 
-The ESC read helper has a 128-byte termination buffer although
-mailboxes are configured for 512 bytes, and the read-length assertion
-is disabled. Review that path before using large mailbox transfers.
-The LDC read function supplies a stack-local transmit buffer to a
-nonblocking SPI transfer, which also merits review when investigating
-corrupt readings.
+All application SPI/I2C transfers use bounded interrupt/DMA completion waits.
+Only the calling task is suspended; other ready tasks can execute while the
+peripheral transfers data. Control and EtherCAT still share one task and execute
+in sequence. The FreeRTOS runtime uses complete sensor
+snapshots. ESC transactions are segmented to at most 128 bytes with one final
+termination byte, including 512-byte mailboxes. Interrupt-transfer buffers
+remain live until completion. DMA buffers remain outside task stacks, and
+SPI6 BDMA wire frames remain in D3 SRAM. Startup zeros both custom
+\code{NOLOAD} ranges before C++ constructors run.
 
-Custom \code{NOLOAD} memory sections, some filter members without
-explicit initialization, shared foreground/interrupt data, blocking
-operations, and dynamic allocation in the control interrupt need
-hardware validation. Nominal timer rates alone do not establish
-execution-time guarantees. These observations are documented without
-changing the firmware.
+Sensor freshness raises warning/SDO error \code{0xFF19} when no earlier warning
+has precedence; PDO mappings are unchanged. A stale warning does not inhibit
+pulses. SOES output loss clears network requests, disables desired charging
+and asserts discharge without issuing a demagnetization pulse. Pulse requests
+rejected during lockout are still dropped rather than queued.
+
+Nominal timer rates do not establish execution-time guarantees. Hardware
+commissioning must measure cycle jitter, pulse/lockout timing, stack margins,
+sensor recovery, network loss and the optional BDMA charger path. See
+\path{wiki/RTOS.md} and \path{CHANGELOG.md} for precise implementation
+and validation limits.
 
 \appendix
 \chapter{Source references}

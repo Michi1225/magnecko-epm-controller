@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `EPM_NUMBER` | CMake cache, default `3` | Written into generated `version.h`, then copied to `Obj.EPM_Number` at startup |
 | Build preset | `Debug`, `RelWithDebInfo`, `Release`, `MinSizeRel` | Separate output directories under `build/` |
-| `USE_BATTERIES` | Defined in `FootController.h` | Skips charger initialization, preventing periodic charger exchanges |
+| `EPM_USE_BATTERIES` | CMake cache, default `ON` | Defines battery mode; `OFF` enables charger initialization and service-task BDMA exchanges |
 | `EEPROM_WRITE` | Not defined by the default build | When defined, writes `eeprom_img` to EEPROM during startup before reading parameters |
 | `MAGNETIZATION_TIME` | `FootController.h`, `5000` | Pulse width parameter in nominal microseconds for both pulse directions |
 | `DEAD_TIME` | `FootController.h`, `10000` | TIM6 auto-reload with 10 µs ticks, about 100 ms lockout |
@@ -17,9 +17,13 @@
 | Force-model constants | `TMAG5273.h` | Coefficients used by the active force calculation |
 | `DEVICE_VERSION` | `TMAG5273.h`, `2` | Selects Hall conversion constant |
 | Temperature sensor type | `FSM_bg()` in `FootController.cpp`, `PT1000` | Selects temperature lookup and disconnection condition |
-| Software watchdog | `FootController.h`, `100` | SOES counter reload, nominal 100 ms at 1 kHz |
+| Software watchdog | `FootController.h`, `100` | SOES counter reload; runtime accounts for elapsed HAL milliseconds |
+| RTOS configuration | `Core/Inc/FreeRTOSConfig.h` | Static allocation, 1 kHz tick, IRQ syscall ceiling 5 |
 
-Only `EPM_NUMBER` is a CMake cache option. `-DUSE_BATTERIES=OFF` passed to CMake would not remove the header's unconditional `#define`; select battery/charger behavior deliberately in the source and rebuild. Similarly, `EEPROM_WRITE` must be a compiler definition, not merely an unused CMake variable.
+`EPM_NUMBER` and `EPM_USE_BATTERIES` are CMake cache options. To compile the
+charger path, configure with `-DEPM_USE_BATTERIES=OFF`. `EEPROM_WRITE` remains a
+compiler definition, not merely a CMake variable. See [RTOS runtime](RTOS.md)
+for task stacks, timeout/freshness thresholds and diagnostics.
 
 Temperature thresholds are currently hardcoded in `FSM_bg()`: warning at 65 °C, fault request at 80 °C, an intended clear branch at 50 °C, and PT1000 disconnected/out-of-range at 240 °C. See [Operation](Operation.md) for the actual branch behavior rather than assuming complete hysteresis.
 

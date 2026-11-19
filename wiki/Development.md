@@ -4,6 +4,7 @@
 
 ## Where to make changes
 
+- Scheduling, completion waits and snapshot ownership live in [`Libs/Runtime`](../Libs/Runtime); kernel configuration is in `Core/Inc/FreeRTOSConfig.h`. See [RTOS runtime](RTOS.md) for regeneration requirements.
 - Add or change device behavior in [`Libs/Controller`](../Libs/Controller) and state transitions in [`Libs/FSM`](../Libs/FSM).
 - Keep sensor protocols and conversion logic in [`Libs/Sensors`](../Libs/Sensors).
 - Add source files to the top-level [`CMakeLists.txt`](../CMakeLists.txt); generated HAL sources are listed in [`cmake/stm32cubemx/CMakeLists.txt`](../cmake/stm32cubemx/CMakeLists.txt).
@@ -18,9 +19,9 @@ The repository provides [`cpp_to_c.bash`](../cpp_to_c.bash), which renames `main
 
 ## Validation
 
-The repository has no project-specific automated test suite. Vendored CMSIS tests are not controller tests. Choose checks based on the changed behavior:
+The host suite in `tests/` covers FSM, filtering, I/O completion/recovery, IMU packets, ESC transport and EEPROM boundaries. `tests/check_firmware.py` checks linked vectors and memory placement. Commands and hardware limits are in [RTOS runtime](RTOS.md#diagnostics-and-validation). Choose checks based on the changed behavior:
 
-1. Configure and build in a fresh directory with the intended ARM toolchain and explicit EPM number. The [currently observed GCC failure](Troubleshooting.md) must be resolved before claiming a successful firmware build.
+1. Configure and build in a fresh directory with the intended ARM toolchain and explicit EPM number. The migration has built with GCC 13.3.1 and 14.3.1; retain both checks when changing compiler-sensitive transport code.
 2. Inspect the generated version header, linker map, RAM usage, and warnings. Verify DMA buffer placement if memory declarations changed.
 3. For EtherCAT changes, compare mapping entries, byte totals (currently 4 output bytes and 264 input bytes), assignments, master configuration, and physical SII contents.
 4. On a supported bench setup, check boot, required sensors, error codes, enable-state handshake, separate pulse directions, button hold, and lockout/retry behavior.

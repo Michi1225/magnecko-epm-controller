@@ -50,10 +50,11 @@ The full signal list is in [`main.h`](../Core/Inc/main.h). `ECAT_IRQ`, `SYNC0`, 
 | --- | --- |
 | TIM1 | One-pulse output on CH1; nominal 1 µs ticks |
 | TIM8 | Pulse output on CH4; manually enables channel and main output in `magnetize()` |
-| TIM2 | Control and EtherCAT loop, nominal 1 ms |
-| TIM4 | IMU service, nominal 2.5 ms |
+| TIM2 | RTOS control/acquisition release, nominal 1 ms |
+| TIM4 | Configured at 2.5 ms; not started by RTOS runtime |
 | TIM5 | Button hold, nominal 1 s |
 | TIM6 | Pulse lockout, 10 µs ticks with `ARR = DEAD_TIME = 10000`, about 100 ms |
+| TIM7 | Independent 1 ms HAL tick and control-progress monitor |
 | TIM3 | Initialized by generated code; no application callback work assigned |
 
 Pulse timers have a 20000-count period. `magnetize()` programs the appropriate compare value as `20000 - time`; the default pulse parameter is 5000 µs. Exact edge timing includes timer counting conventions and needs measurement if changing pulse behavior.
@@ -71,4 +72,4 @@ Pulse timers have a 20000-count period. `magnetize()` programs the appropriate c
 | RAM_D3 | `0x38000000` | 16 KiB |
 | ITCMRAM | `0x00000000` | 64 KiB |
 
-Ordinary `.data`, `.bss`, heap, and stack use DTCMRAM. Custom `.RAM` and `.RAM_D3` sections are `NOLOAD`; buffers placed there require deliberate initialization. Do not move DMA buffers into another memory region without reviewing the peripheral DMA path. These are linker allocations, not a complete statement of all physical device memory.
+Ordinary `.data`, `.bss`, heap, and stack use DTCMRAM. Custom `.RAM` and `.RAM_D3` sections remain `NOLOAD`; startup zeros them before C++ constructors. SPI6 BDMA wire frames must remain in D3 SRAM. Both DMA windows have explicit noncacheable MPU regions. Static task stacks remain in DTCM; see [RTOS runtime](RTOS.md). Do not move DMA buffers into another memory region without reviewing the peripheral DMA path. These are linker allocations, not a complete statement of all physical device memory.

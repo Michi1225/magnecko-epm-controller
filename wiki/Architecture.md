@@ -9,6 +9,8 @@
 | [`Core/Src/main.cpp`](../Core/Src/main.cpp) | Entry point, global `Obj` and `controller`, EtherCAT callbacks, HAL callbacks, fatal error handler |
 | [`Core/Inc`](../Core/Inc) / [`Core/Src`](../Core/Src) | CubeMX peripheral configuration, interrupt handlers, HAL setup, and system support |
 | [`Libs/Controller`](../Libs/Controller) | `FootController`, charger protocol, LED patterns, EEPROM access, and SWO utilities |
+| [`Libs/Runtime`](../Libs/Runtime) | Static tasks, sensor queues, completion waits, scheduling/freshness diagnostics |
+| [`Libs/FreeRTOS-Kernel`](../Libs/FreeRTOS-Kernel) | Pinned V11.2.0 kernel and GCC Cortex-M7 port |
 | [`Libs/FSM`](../Libs/FSM) | Control-word decoding, state transitions, status-word constants, and error codes |
 | [`Libs/Sensors`](../Libs/Sensors) | BNO086, LDC1101, TMAG5273, TMF8829, temperature lookup, and ToF firmware image |
 | [`Libs/SOES_Wrapper`](../Libs/SOES_Wrapper) | SOES build, SPI ESC hardware layer, and object dictionary |
@@ -36,34 +38,45 @@ flowchart LR
 ## Startup
 
 1. `main()` configures the MPU, HAL, clocks, GPIO, DMA/BDMA, I2C, SPI, timers, ADC, and CRC.
-2. `FootController::init()` configures LEDs and pulse timers, then enables the gate drivers by driving `GD_nEN` low.
+2. `App_Start()` creates static tasks/queues and starts FreeRTOS. The service task runs `FootController::init()` while workers wait for readiness. Initialization configures LEDs and pulse timers, then enables the gate drivers by driving `GD_nEN` low.
 3. The FSM callbacks are bound. Ten force parameters are read from the I2C EEPROM; defining `EEPROM_WRITE` also writes the embedded image first.
-4. The external EtherCAT controller is reset. Firmware waits for `EEPROM_LOADED` **without a timeout**, then calls `ecat_slv_init()`.
+4. The external EtherCAT controller is reset. Firmware waits up to 2 seconds for `EEPROM_LOADED`, then calls `ecat_slv_init()` with bounded transport/DL-status polling.
 5. The Git version string is copied into the storage of `Force_Estimate_Params`; `EPM_Number` is set from the generated header.
 6. The IMU, four LDCs, temperature ADC, Hall bus, and ToF sensor are initialized and acquisition starts. Most sensor initialization failures become warning flags.
-7. Charger initialization runs only when `USE_BATTERIES` is absent. The control and IMU timers start; TIM6 receives the pulse dead-time period.
-8. `SWD_Init()` enables trace support. The foreground loop repeatedly reads Hall sensors in order 3, 2, 1, 0.
+7. Charger initialization runs with `EPM_USE_BATTERIES=OFF`. TIM6 receives the pulse dead-time period.
+8. After initialization, the service task releases workers and starts TIM2. The foreground main loop is replaced by the scheduler; `SWD_Init()` runs before scheduler startup.
 
 ## Execution contexts
 
-| Context | Nominal rate / trigger | Work |
-| --- | --- | --- |
-| Foreground loop | As fast as Hall transfers finish | Read four Hall magnitudes using DMA followed by a busy wait |
-| TIM2 | 1 kHz | `runControl()`, `runCommunication()`, start one LDC read |
-| TIM4 | 400 Hz | `imu.update()` |
-| TIM5 | About 1 s after button press | Request and directly attempt a demagnetization pulse |
-| TIM6 | About 100 ms after an accepted pulse | Clear `dead_time_active` |
-| GPIO EXTI | Sensor/button edges | Count IMU messages, clear ToF interrupt, start/stop button timer |
-| SPI completion | Transfer completion | Decode sensor data, advance the LDC ring, validate charger CRC |
+The [RTOS runtime](RTOS.md) defines five application tasks. TIM2 posts control
+and acquisition releases at nominal 1 kHz. IMU/ToF EXTI and I/O completion
+callbacks signal tasks. Button hold and dead-time callbacks post control
+events. TIM1/TIM8 remain responsible for pulse edges. TIM4 is not started.
 
-These rates follow [timer setup](../Core/Src/tim.c) with nominal 275 MHz timer clocks. They do not guarantee sensor freshness at the same rates. Each LDC is visited roughly every fourth control tick, assuming successful completion.
+Control runs the FSM and telemetry update before EtherCAT service, retaining
+the existing command phase order. SOES alone owns `Obj` in that same task;
+callbacks retain their original command/status behavior. Fresh sensor snapshots
+arrive through one-element queues. A task release is not proof of a new sample
+or a met execution deadline.
 
-`runControl()` executes the state action and background telemetry/error update before `runCommunication()` polls SOES. New network commands therefore normally affect a later control invocation. `cb_get_inputs()` currently performs command edge detection even though SOES calls it while preparing master inputs; `cb_set_outputs()` copies the status word. Follow the actual functions rather than inferring their behavior from their names.
+SOES is polled once per completed cyclic invocation. Its watchdog accounting
+uses elapsed HAL milliseconds, while missed task releases coalesce. TIM7
+provides HAL milliseconds independently of the FreeRTOS SysTick and checks
+for a completed-control heartbeat older than 100 ms.
 
 ## Shared state and memory
 
-`Obj` is the C-compatible object storage declared in [`utypes.h`](../Libs/SOES_Wrapper/autogenerated/utypes.h). The SOES dictionary points into it. Sensor buffers and controller members are shared across foreground and interrupt contexts; there is no RTOS or locking layer.
+Control owns the FSM, pulse requests and exported process data. Each sensor bus
+has one task owner. Services owns LED/charger/CRC operations. Sensor snapshots
+carry timestamps and validity; stale data raises a warning without changing
+PDO layout. See [RTOS runtime](RTOS.md) for rates, priorities, stacks and limits.
 
-The controller and several buffers use `.RAM`; charger frames use `.RAM_D3`. These linker sections are `NOLOAD`. Review construction, initialization, DMA accessibility, and cache behavior whenever changing their placement. See [Hardware](Hardware.md) for the linker map.
+Static task stacks and kernel objects use DTCM. DMA-visible `.RAM` and BDMA
+`.RAM_D3` remain `NOLOAD`, zeroed before C++ construction. **SPI6 BDMA wire
+buffers remain in D3 SRAM**, and DMA never receives a task-stack buffer. The MPU
+marks both DMA windows noncacheable. [Hardware](Hardware.md) lists regions.
 
-The control ISR also performs blocking EtherCAT SPI operations and floating-point force estimation with a dynamically allocated deque. Changes to this path should be evaluated for interrupt latency and transfer completion behavior on hardware.
+FSM dispatch uses member-function pointers and the force moving average has
+fixed storage. C++ action bindings allocate during startup; periodic dispatch
+and filtering do not allocate. Fatal handling uses immediate hardware actions
+and halts without scheduler or bus waits. Hardware verification remains needed.

@@ -1,19 +1,20 @@
 # Magnecko EPM controller wiki
 
-This wiki describes the firmware at baseline commit `105e29d` (documentation prepared 29 October 2026). It is stored in the repository so it can be reviewed alongside code changes. All pages use relative Markdown links and can be read locally or in a Git repository browser.
+This wiki was updated for the FreeRTOS migration on 19 November 2026; the original documentation baseline was commit `105e29d`. It is stored in the repository so it can be reviewed alongside code changes. All pages use relative Markdown links and can be read locally or in a Git repository browser.
 
 ## Start here
 
 | Page | Contents |
 | --- | --- |
-| [Architecture](Architecture.md) | Repository map, startup, interrupt scheduling, and data flow |
+| [Architecture](Architecture.md) | Repository map, startup, task scheduling, and data flow |
+| [RTOS runtime](RTOS.md) | Task ownership, time bases, memory, I/O recovery, and validation |
 | [Build and flash](Build-and-Flash.md) | Dependencies, CMake presets, EPM selection, ST-Link, and debugging |
 | [Hardware](Hardware.md) | MCU, peripheral assignments, GPIO signals, and memory placement |
 | [EtherCAT interface](EtherCAT-Interface.md) | PDO byte layout, object indices, mailbox parameters, and description mismatch |
 | [Operation](Operation.md) | Enable sequence, magnet commands, manual button, shutdown, and fault behavior |
 | [Sensors and force estimation](Sensors-and-Force-Estimation.md) | Sensor acquisition, exported values, filtering, and slip detection |
 | [Configuration](Configuration.md) | Build settings, timing constants, EEPROM, and runtime parameters |
-| [Troubleshooting](Troubleshooting.md) | Error codes, observed build issue, and implementation limitations |
+| [Troubleshooting](Troubleshooting.md) | Error codes, build/toolchain checks, and implementation limitations |
 | [Development](Development.md) | Code ownership, CubeMX regeneration, and validation workflow |
 
 For a printable operating guide, see [the LaTeX source](../user-guide/user-guide.tex) and [PDF build instructions](../user-guide/README.md).
@@ -22,7 +23,7 @@ For a printable operating guide, see [the LaTeX source](../user-guide/user-guide
 
 The STM32 application controls a magnetic foot through two timed pulse outputs. A polled SOES EtherCAT slave supplies the command interface. A drive-style finite state machine gates network magnet commands, while a physical button provides a separate demagnetization path. Four Hall sensors feed an empirical force model; four inductive sensors provide a slip indication that can suppress the reported force.
 
-The application also publishes a BNO086 IMU, an 8 by 8 TMF8829 distance frame and SNR, an ADC temperature reading, and charger voltage when charger communication is enabled. The current source defines `USE_BATTERIES`, so the charger is not initialized in the default configuration.
+The application also publishes a BNO086 IMU, an 8 by 8 TMF8829 distance frame and SNR, an ADC temperature reading, and charger voltage when charger communication is enabled. The default CMake option `EPM_USE_BATTERIES=ON` leaves the charger uninitialized.
 
 ## Reading the documentation
 

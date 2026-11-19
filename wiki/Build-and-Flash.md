@@ -10,7 +10,7 @@
 - STM32CubeProgrammer and an ST-Link/SWD connection for flashing.
 - Optionally VS Code with CMake Tools, Cortex-Debug, and the STM32 tooling used by the checked-in editor configuration.
 
-The toolchain file targets Cortex-M7 with `fpv5-d16` and the hard-float ABI. C sources use C11. C++ has no explicit language standard in CMake; the source uses C++17 constructs such as structured bindings, so the compiler default must support them. RTTI, exceptions, and thread-safe static initialization are disabled by the toolchain file.
+The toolchain file targets Cortex-M7 with `fpv5-d16` and the hard-float ABI. C sources use C11. C++17 is selected explicitly. RTTI, exceptions, and thread-safe static initialization are disabled by the toolchain file.
 
 ## Initialize dependencies
 
@@ -51,9 +51,19 @@ Expected Debug artifacts are `build/Debug/MagneckoFoot_Header.elf`, `build/Debug
 
 The root `Makefile` is a separate legacy generated build; these instructions use the maintained CMake source list, SOES integration, and version-header generation.
 
-### Observed build limitation
+### Toolchain validation
 
-A clean Debug configure succeeded with ARM GCC **14.3.1** during documentation validation. Compilation then failed in [`esc_hw.c`](../Libs/SOES_Wrapper/hal/esc_hw.c) at the `HAL_SPI_TransmitReceive()` call in `esc_address()`: `&ESCvar.ALevent` is not the `uint8_t *` receive buffer type expected by HAL. This is an existing source issue, not a missing dependency. See [Troubleshooting](Troubleshooting.md). No successful firmware build or hardware test is claimed by this documentation.
+The pre-migration firmware builds with ARM GCC **13.3.1**, as used by the editor
+configuration. GCC **14.3.1** rejected its incompatible SPI receive pointer.
+The migration uses an explicit two-byte receive buffer and event decode, and
+has been built with both compiler versions. See [the change log](../CHANGELOG.md)
+for the tested configurations and memory usage. A successful build does not
+replace the [RTOS hardware validation](RTOS.md#diagnostics-and-validation).
+
+FreeRTOS V11.2.0 is vendored; no network download is needed when building.
+`-DEPM_USE_BATTERIES=OFF` compiles the optional charger/BDMA path.
+
+Host tests and ELF memory/vector checks are described in [RTOS runtime](RTOS.md).
 
 ## Flash a successfully built image
 

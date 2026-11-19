@@ -2,7 +2,7 @@
 
 [`user-guide.tex`](user-guide.tex) is a standalone English guide for building, commissioning, and operating the Magnecko EPM controller. It covers the implemented EtherCAT interface, enable sequence, pulse commands, manual demagnetization, telemetry, fault handling, and known limitations.
 
-It documents baseline commit `105e29d` and follows the Magnecko Sense manual's visual style: DejaVu Sans typography, Magnecko red chapter headings and links, a branded cover, document metadata, running headers and footers, and compact reference tables. The document identifier is `EPM-UG-001`, revision A; the cover records a firmware baseline rather than an unverified hardware revision.
+It documents baseline commit `105e29d` plus the 19 November 2026 RTOS migration and follows the Magnecko Sense manual's visual style: DejaVu Sans typography, Magnecko red chapter headings and links, a branded cover, document metadata, running headers and footers, and compact reference tables. The document identifier is `EPM-UG-001`, revision B; the cover records a firmware baseline rather than an unverified hardware revision.
 
 Compile with LuaLaTeX (the default) or XeLaTeX and install the **DejaVu Sans** and **DejaVu Sans Mono** fonts. Required LaTeX packages are `fontspec`, `geometry`, `xcolor`, `microtype`, `amsmath`, `amssymb`, `array`, `booktabs`, `longtable`, `calc`, `graphicx`, `fvextra`, `enumitem`, `titlesec`, `fancyhdr`, `lastpage`, `etoolbox`, `xurl`, `hyperref`, and `bookmark`. No external images, bibliography, network access, or shell escape are required. The source is self-contained and does not depend on files in the Magnecko Sense repository.
 

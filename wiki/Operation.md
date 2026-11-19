@@ -56,7 +56,7 @@ Each `exchange` represents continued cyclic service, not a one-shot API call. Ad
 
 ## Physical button
 
-Pressing the active-low button starts TIM5; releasing it stops the timer. Holding it for about one second directly calls `magnetize()` with a demagnetization request. This path bypasses the application operation-enabled state check, but still respects dead time, pulse limits, and the overtemperature flag. A request blocked at that moment is not retried automatically; release and press again if appropriate. A halted controller cannot service this button.
+Pressing the active-low button starts TIM5; releasing it stops the timer. Holding it for about one second posts a demagnetization event to the control task. This path bypasses the application operation-enabled state check, but still respects dead time, pulse limits, and the overtemperature flag. A request blocked at that moment is not retried automatically; release and press again if appropriate. A halted controller cannot service this button.
 
 ## Disabling and shutdown
 
@@ -68,7 +68,7 @@ Other implemented commands are `0x0007` to disable operation into switched on, `
 
 The active temperature model is PT1000. A valid reading of at least **65 °C** sets a warning; at least **80 °C** requests fault reaction. A PT1000 reading of at least **240 °C** is treated as disconnected/out of range and raises a warning instead of entering the overtemperature branch. That path may leave the exported temperature unchanged.
 
-The source contains an intended clear branch at **50 °C**, but another branch clears the overtemperature flag for readings from 65 °C to below 80 °C. Do not assume a reliable 80/50 °C hysteresis. More immediately, the fault-reaction action calls `Error_Handler()`, which stops pulse outputs, asserts discharge, disables charger command storage, attempts charger communication, disables interrupts, and halts. Correct the condition and reset or power-cycle; do not rely on SDO/control-word recovery from that halt.
+The source contains an intended clear branch at **50 °C**, but another branch clears the overtemperature flag for readings from 65 °C to below 80 °C. Do not assume a reliable 80/50 °C hysteresis. More immediately, the fault-reaction action calls `Error_Handler()`, which immediately stops pulse outputs, disables gate drivers, asserts discharge, clears charger command storage, disables interrupts, and halts without bus or RTOS waits. Correct the condition and reset or power-cycle; do not rely on SDO/control-word recovery from that halt.
 
 The generic FSM has `FAULT` (`0x0018`) and a fault-reset command (`0x0080`), but the controller's fatal path does not call `exitFaultReaction()` to reach a recoverable fault state. The final fault status/error may not be transmitted before communication stops.
 
@@ -80,6 +80,8 @@ The generic FSM has `FAULT` (`0x0018`) and a fault-reset command (`0x0080`), but
 | Cyan | End of initialization and entry to switch-on-disabled |
 | All channels on | Entry to switched-on |
 | Solid green | Entry to operation-enabled |
-| Fast red blink | Fatal `Error_Handler()` |
+| Fast red blink | Available animation; fatal handler does not perform I2C writes, so this indication is not guaranteed on a fatal halt |
 
 Other sensor-specific animations exist in [`LEDController.cpp`](../Libs/Controller/LEDController.cpp), but initialization warnings currently set error flags without selecting those animations. A green LED therefore does not certify that every sensor initialized successfully.
+
+Sensor freshness warnings use SDO error `0xFF19` and the existing status warning bit. A stale sensor warning does not inhibit pulses or add PDO validity fields. SOES output loss clears network commands, disables the desired charger command and asserts discharge without generating a demagnetization pulse. A completed control cycle missing for more than 100 ms triggers the fatal halt. See [RTOS runtime](RTOS.md).
