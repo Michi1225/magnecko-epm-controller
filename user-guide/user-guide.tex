@@ -1,0 +1,726 @@
+% Styled after the Magnecko Sense manual/template.tex.
+% Compile with LuaLaTeX or XeLaTeX; no external images are required.
+\documentclass[10pt,a4paper,oneside]{report}
+\usepackage{fontspec}
+\setmainfont{DejaVu Sans}
+\setsansfont{DejaVu Sans}
+\setmonofont[Scale=0.85]{DejaVu Sans Mono}
+\usepackage[a4paper,left=20mm,right=19mm,top=25mm,bottom=23mm,
+  headheight=28pt,headsep=7mm,footskip=12mm]{geometry}
+\usepackage[table]{xcolor}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{array,booktabs,longtable,calc}
+\usepackage{graphicx}
+\usepackage{fvextra}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr,lastpage}
+\usepackage{etoolbox}
+\usepackage{xurl}
+\usepackage{hyperref}
+\usepackage{bookmark}
+\definecolor{MGSRed}{HTML}{B71930}
+\definecolor{MGSInk}{HTML}{1C2630}
+\definecolor{MGSMuted}{HTML}{52616D}
+\definecolor{MGSRule}{HTML}{C9D0D5}
+\definecolor{MGSGray}{HTML}{F0F3F5}
+\color{MGSInk}
+\newcommand{\ProductName}{Magnecko EPM Controller}
+\newcommand{\SourceBaseline}{105e29d}
+\newcommand{\DocumentID}{EPM-UG-001}
+\newcommand{\DocumentRevision}{A}
+\newcommand{\DocumentDate}{October 2026}
+\hypersetup{colorlinks=true,linkcolor=MGSRed,urlcolor=MGSRed,
+  pdftitle={Magnecko EPM Controller -- User Guide and Reference Manual},
+  pdfauthor={Magnecko},bookmarksnumbered=true,bookmarksopen=false}
+\urlstyle{tt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlength{\emergencystretch}{2em}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.18}
+\setlength{\LTpre}{8pt}
+\setlength{\LTpost}{8pt}
+\setcounter{tocdepth}{1}
+\setcounter{secnumdepth}{2}
+\makeatletter
+\renewcommand*\l@section{\@dottedtocline{1}{1.5em}{3.6em}}
+\patchcmd{\l@chapter}{1.5em}{2.4em}{}{\PackageError{epmmanual}{Could not size chapter numbers}{Check the table of contents layout.}}
+\makeatother
+\setlist{nosep,leftmargin=1.5em,topsep=4pt,parsep=2pt}
+\setlist[itemize]{label=\textcolor{MGSRed}{\textbullet}}
+\providecommand{\tightlist}{\setlength{\itemsep}{1pt}\setlength{\parskip}{1pt}}
+\DefineVerbatimEnvironment{verbatim}{Verbatim}{breaklines=true,breakanywhere=true,
+  fontsize=\small,baselinestretch=1,frame=single,rulecolor=\color{MGSRule},
+  framesep=6pt,formatcom=\color{MGSInk}}
+\AtBeginEnvironment{longtable}{\small}
+\titleformat{\chapter}[display]{\bfseries\color{MGSRed}}
+  {\large\chaptertitlename\ \thechapter}{5pt}{\LARGE}
+\titlespacing*{\chapter}{0pt}{0pt}{17pt}
+\titleformat{\section}{\large\bfseries\color{MGSRed}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{12pt}{5pt}
+\titlespacing*{\subsection}{0pt}{9pt}{4pt}
+\renewcommand{\chaptermark}[1]{\markboth{\thechapter\quad #1}{}}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\textcolor{MGSRed}{\large\bfseries EPM}\quad\small\ProductName}
+\fancyhead[R]{\scriptsize\DocumentID\ Rev.\ \DocumentRevision\\Source: \SourceBaseline}
+\fancyfoot[L]{\scriptsize\color{MGSMuted}\nouppercase{\leftmark}}
+\fancyfoot[R]{\small\bfseries\thepage}
+\renewcommand{\headrulewidth}{0.5pt}
+\renewcommand{\footrulewidth}{0.3pt}
+\fancypagestyle{plain}{\fancyhf{}
+  \fancyhead[L]{\textcolor{MGSRed}{\large\bfseries EPM}\quad\small\ProductName}
+  \fancyhead[R]{\scriptsize\DocumentID\ Rev.\ \DocumentRevision\\Source: \SourceBaseline}
+  \fancyfoot[L]{\scriptsize\color{MGSMuted}\DocumentDate\quad |\quad PRELIMINARY}
+  \fancyfoot[R]{\small\bfseries\thepage}}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+\begin{document}
+\raggedright
+\hypersetup{pageanchor=false}
+\begin{titlepage}
+\thispagestyle{empty}
+{\color{MGSRed}\Large\bfseries magnecko}\par
+\vspace{22mm}
+{\color{MGSRed}\small\bfseries MAGNET CONTROL + FOOT SENSING}\par
+\vspace{4mm}
+{\fontsize{32}{38}\selectfont\bfseries\ProductName}\par
+\vspace{6mm}
+{\fontsize{22}{29}\selectfont User Guide and\\Reference Manual\par}
+\vspace{10mm}
+{\large Development, integration, diagnostics, and validation}\par
+\vspace{9mm}
+\textcolor{MGSRed}{\rule{\linewidth}{1.2pt}}\par
+\vspace{8mm}
+\begin{tabular}{@{}ll}
+Document & \DocumentID\quad Revision \DocumentRevision \\
+Firmware baseline & \texttt{\SourceBaseline} \\
+Publication & \DocumentDate \\
+Status & Preliminary engineering reference
+\end{tabular}
+\vfill
+{\small This manual covers build and programming workflows, EtherCAT
+configuration, magnet control, sensor telemetry, diagnostics, and recovery
+for the Magnecko EPM controller. Detailed developer documentation is
+maintained alongside the firmware in the project wiki.\par}
+\vspace{6mm}
+{\small\color{MGSMuted}Firmware repository: \texttt{magnecko-epm-controller}\\
+Source paths are relative to the repository root. Chapter links are internal;
+source-derived behavior does not record completed hardware tests.\par}
+\end{titlepage}
+\hypersetup{pageanchor=true}
+\pagenumbering{roman}
+\tableofcontents
+\clearpage
+\pagenumbering{arabic}
+\chapter{System overview}
+
+This guide explains how to prepare, build, commission, and operate the
+STM32H725 firmware for a Magnecko electro-permanent magnet (EPM) foot.
+It describes the behavior present in the source, including limitations
+that affect commissioning and recovery. It is intended for an operator
+or integrator with access to the board design and an EtherCAT master.
+
+\textbf{Commissioning status.} The checked-in EtherCAT XML describes an
+older actuator interface and does not match the compiled EPM dictionary.
+A clean firmware build with ARM GCC 14.3.1 also fails on an existing SPI
+receive-buffer pointer mismatch. Resolve those issues before commissioning
+a newly built image or master configuration. This guide does not claim a
+successful hardware validation.
+
+
+The controller receives control words and magnet commands through an
+external EtherCAT slave controller connected over SPI. Two timer outputs
+generate magnetization and demagnetization pulses. A finite state machine
+(FSM) gates network pulse requests, and a physical button provides a
+separate demagnetization path.
+
+The firmware publishes magnetic holding-force estimates, temperature,
+IMU reports, an 8 by 8 distance frame and signal-to-noise values,
+four inductive sensor readings, and four Hall sensor readings. A capacitor
+charger interface is present, but the current source selects battery mode
+and skips charger initialization.
+
+The project name in the build system remains
+\code{MagneckoFoot_Header}. The application runs without an RTOS:
+the control and communication work runs at a nominal 1\,kHz in TIM2,
+IMU service at 400\,Hz in TIM4, and Hall measurements in the foreground
+loop. Telemetry may contain the latest stored sample rather than a new
+measurement on every EtherCAT cycle.
+
+\section{What this repository supplies}
+
+The repository includes application firmware, STM32 HAL/CMSIS sources,
+the CubeMX project, an SOES slave-stack submodule, build files, and
+EtherCAT description artifacts. Detailed developer documentation is in
+\path{wiki/Home.md}.
+
+Board connector drawings, approved supply voltages, current limits,
+mechanical load limits, an EtherCAT master program, and a verified
+external ESC EEPROM provisioning procedure are not supplied. Obtain
+the applicable board design information before connecting hardware.
+
+\section{Physical state and software state}
+
+Support the mechanism independently before testing release. A
+demagnetization pulse, including one requested with the physical button,
+can release the magnetic attachment.
+
+The reported magnet status is a software record of the last accepted
+pulse direction. It does not confirm magnetic attachment, pulse energy,
+or actual holding force. It initializes to false after MCU reset
+regardless of the physical magnetic state. Treat the force estimate as
+an empirical measurement requiring validation for the individual foot
+and surface.
+
+\chapter{Prepare the development environment}
+
+\section{Tools and connections}
+
+Use Git, CMake 3.22 or newer, Ninja, and an ARM embedded GCC toolchain.
+Place \code{arm-none-eabi-gcc}, \code{arm-none-eabi-g++}, and binutils
+on \code{PATH}.
+
+Flashing requires STM32CubeProgrammer and an ST-Link
+connected through the board's SWD interface. Operation requires a
+compatible EtherCAT master and a corrected device/process configuration.
+
+The toolchain targets Cortex-M7 with hard-float \code{fpv5-d16}. C is
+configured as C11. C++ source uses C++17 constructs, although the build
+does not explicitly select a C++ standard. Use a compiler whose default
+supports those constructs. C++ exceptions and RTTI are disabled.
+
+The CubeMX project identifies \code{STM32H725VGH6}; the checked-in
+VS Code debugger configuration names \code{STM32H725RGVx}. Verify the
+physical device and correct the debugger selection before relying on it.
+
+\section{Initialize the slave-stack dependency}
+
+Run from the repository root:
+
+\begin{verbatim}
+git submodule update --init --recursive
+git submodule status
+\end{verbatim}
+
+The recorded SOES URL uses SSH. If SSH access is unavailable, a local
+override can select HTTPS without editing the repository's submodule file:
+
+\begin{verbatim}
+git config submodule.Libs/SOES_Wrapper/SOES.url https://github.com/OpenEtherCATsociety/SOES.git
+git submodule update --init --recursive
+\end{verbatim}
+
+Keep the recorded submodule revision unless intentionally reviewing an
+upgrade.
+
+\chapter{Build and flash the firmware}
+\label{sec:build}
+
+\section{Select the foot identity and build}
+
+Use the CMake presets from the repository root:
+
+\begin{verbatim}
+cmake --list-presets
+cmake --preset Debug -DEPM_NUMBER=3
+cmake --build --preset Debug --parallel
+\end{verbatim}
+
+Replace \code{3} with the identity expected by the host for the target
+foot. CMake defaults to 3, while the VS Code configuration task offers
+1--4 and defaults to 1. Explicit selection avoids unintentionally
+programming the wrong identity.
+
+The expected application image is
+\path{build/Debug/MagneckoFoot_Header.elf}. The build also produces a map
+file and \path{build/Debug/generated/version.h}. The version header records
+the eight-character Git hash, a dirty flag, the Git version string, and
+the EPM number. Uncommitted documentation also marks the version dirty.
+
+Other configure/build preset pairs are \code{RelWithDebInfo},
+\code{Release}, and \code{MinSizeRel}. For example:
+
+\begin{verbatim}
+cmake --preset Release -DEPM_NUMBER=3
+cmake --build --preset Release --parallel
+\end{verbatim}
+
+\textbf{Existing build issue.} A clean Debug configure with ARM GCC
+14.3.1 succeeded during documentation checks, but compilation failed in
+\path{Libs/SOES_Wrapper/hal/esc_hw.c}, at the SPI call in
+\code{esc_address()}. The receive argument \code{&ESCvar.ALevent} does
+not have the byte-pointer type HAL expects. This requires a reviewed
+firmware correction; the documentation leaves source behavior unchanged.
+
+\section{Program a successfully built image}
+
+Confirm the target identity, board variant, and power arrangement. The
+following commands mirror the repository's flash task:
+
+\begin{verbatim}
+STM32_Programmer_CLI --list
+STM32_Programmer_CLI --connect port=swd --download build/Debug/MagneckoFoot_Header.elf -hardRst -rst --start
+\end{verbatim}
+
+The ELF includes its load addresses. Programming it updates the MCU;
+it does not program the external EtherCAT controller's EEPROM/SII.
+
+VS Code offers a \code{Build + Flash} task that selects the EPM number,
+configures, rebuilds, and flashes. Its launch and attach configurations
+use the STM32 extension's CubeCLT paths and Cortex-Debug. The application
+has SWO utilities but no UART command shell.
+
+\chapter{Configure the EtherCAT master}
+\label{sec:ethercat}
+
+\section{Reconcile the device description}
+
+\textbf{Do not assume the current XML matches the firmware.}
+The file \path{Libs/SOES_Wrapper/autogenerated/slave.xml} describes
+\code{Actuator V1} with position, velocity, torque, and GPIO mappings.
+CMake compiles \path{slave_objectlist.c} from the same directory, whose
+interface is the EPM layout below. JSON metadata also differs from the
+compiled identity values.
+
+Before commissioning, reconcile the master ESI, actual ESC EEPROM/SII,
+and compiled C dictionary. The repository does not supply a verified
+end-to-end regeneration/provisioning workflow. Use the compiled dictionary
+and \path{utypes.h} as references for the firmware interface.
+
+The application polls SOES from its nominal 1\,kHz timer. Start with
+a nominal 1\,ms master process cycle compatible with that behavior.
+Distributed-clock validation is not implemented; enabling DC may prevent
+the transition from PREOP to SAFEOP.
+
+\section{Master outputs: 4 bytes}
+
+The slave's RxPDO \code{0x1600} contains the following packed fields.
+Offsets describe the EtherCAT process image, not the C object structure.
+
+\begin{longtable}{L{17mm}L{28mm}L{50mm}L{26mm}}
+\toprule
+Byte & Object & Field & Width \\
+\midrule
+\endhead
+0 & \code{0x6040:00} & Control word & 16 bits \\
+2 & \code{0x6060:00} & Operation mode & 8 bits \\
+3 & \code{0x7000:00} & Magnet command & 8 bits \\
+\bottomrule
+\end{longtable}
+
+Keep operation mode at zero. It has storage in the dictionary, but no
+controller mode-selection behavior is implemented.
+
+\section{Master inputs: 264 bytes}
+
+The default TxPDO assignment lists \code{0x1A00} through
+\code{0x1A06} in this order:
+
+\begin{longtable}{L{22mm}L{15mm}L{18mm}L{86mm}}
+\toprule
+PDO & Byte & Bytes & Fields in order \\
+\midrule
+\endhead
+\code{0x1A00} & 0 & 10 & Status word, mode display, magnet status, force estimate, temperature \\
+\code{0x1A01} & 10 & 20 & Gyro XYZ, linear acceleration XYZ, quaternion RIJK \\
+\code{0x1A02} & 30 & 128 & 64 signed 16-bit distances \\
+\code{0x1A03} & 158 & 64 & 64 unsigned 8-bit SNR values \\
+\code{0x1A04} & 222 & 16 & Four unsigned 16-bit LDC frequency registers, then four RP registers \\
+\code{0x1A05} & 238 & 24 & Four signed 16-bit Hall X values, then four Y, then four Z \\
+\code{0x1A06} & 262 & 2 & Unsigned 16-bit capacitor voltage \\
+\bottomrule
+\end{longtable}
+
+Use EtherCAT little-endian decoding for multi-byte values. Do not copy
+the in-memory \code{_Objects} structure as the process image.
+
+General status at byte offsets 0--9 is:
+
+\begin{longtable}{L{15mm}L{29mm}L{35mm}L{63mm}}
+\toprule
+Byte & Object & Type & Meaning \\
+\midrule
+\endhead
+0 & \code{0x6041:00} & 16-bit word & Application FSM status \\
+2 & \code{0x6061:00} & 8-bit & Mode display; not updated by current application logic \\
+3 & \code{0x2000:00} & Unsigned 8-bit & Software magnet status, zero or one \\
+4 & \code{0x2001:00} & REAL32 & Empirical filtered force estimate, intended newtons \\
+8 & \code{0x2040:01} & Signed 16-bit & Temperature in hundredths of a degree Celsius \\
+\bottomrule
+\end{longtable}
+
+Read the error code separately with SDO \code{0x603F:00}; it is not
+included in the default input PDOs.
+
+\chapter{Commission and enable the application}
+\label{sec:enable}
+
+\section{Initial checks}
+
+Use the board's approved supplies and wiring. Keep the magnet command
+at zero during startup. Check that the master mapping agrees with
+Chapter~\ref{sec:ethercat}, that the EPM identity at
+\code{0x2100:02} matches the device, and that required sensor values
+and temperature are plausible.
+
+The firmware waits indefinitely for \code{EEPROM_LOADED} after
+resetting the external ESC. If initialization remains in its configuring
+pattern, inspect that input and the ESC reset/power arrangement.
+
+Bring EtherCAT to OP using the master's normal state transitions.
+EtherCAT OP is separate from the application FSM's operation-enabled
+state. Exchange initialized outputs continuously: control word zero,
+mode zero, and magnet command zero.
+
+\section{Control-word sequence}
+
+Apply each control word until the returned status masked with
+\code{0x007F} matches the expected state:
+
+\begin{longtable}{L{29mm}L{28mm}L{29mm}L{51mm}}
+\toprule
+Step & Control word & Masked status & Expected state \\
+\midrule
+\endhead
+Initial & \code{0x0000} & \code{0x0050} & Switch on disabled \\
+Shutdown command & \code{0x0006} & \code{0x0031} & Ready to switch on \\
+Switch on & \code{0x0007} & \code{0x0033} & Switched on \\
+Enable & \code{0x000F} & \code{0x0037} & Operation enabled \\
+\bottomrule
+\end{longtable}
+
+These are the constants implemented by this firmware. The drive-style
+command name ``shutdown'' denotes a state transition; it does not mean
+that a demagnetization pulse is sent. Bit 7, \code{0x0080}, is the
+warning indication and lies outside the state mask.
+
+Continue cyclic exchange and add host timeouts for each transition.
+Inspect warnings rather than treating the state alone as proof that
+all sensors work. Wait for operation enabled before issuing a magnet
+command: entry to that state clears pending requests.
+
+\chapter{Magnet commands and manual release}
+\label{sec:pulses}
+
+\section{Request a pulse}
+
+Keep control word \code{0x000F} and operation mode zero while requesting
+a network pulse. Magnet command bit 0 requests magnetization; bit 1
+requests demagnetization. Requests use a rising edge on each bit.
+
+\begin{enumerate}
+\item Send \code{Magnet_Command = 0x00} and allow at least one firmware
+processing cycle.
+\item Send \code{0x01} to magnetize or \code{0x02} to demagnetize.
+Keep it present long enough for the device's poll to observe it.
+\item Return the command to zero and allow it to be processed before
+another request.
+\item Inspect magnet status and sensor response. Allow more than
+100\,ms from the last accepted pulse before another request, plus any
+board-specific recharge time.
+\end{enumerate}
+
+The default pulse parameter is 5000\,$\mu$s (5\,ms). The pulse function
+accepts parameters between 1000 and 10000\,$\mu$s inclusive, rejects a
+request during dead time or with an active overtemperature flag, and
+updates the software magnet flag when it starts the pulse timer.
+
+The lockout is approximately 100\,ms. A blocked request is dropped,
+not queued. Retry with a fresh zero-to-one edge after the lockout and
+recharge interval. Leaving a command bit high does not repeat pulses.
+Do not request both directions together: raising both bits from zero
+cancels both requests in the input callback.
+
+Writing the pulse-time SDO does not change the pulse width. The active
+width comes from \code{MAGNETIZATION_TIME} in the source.
+
+\section{Conceptual cyclic sequence}
+
+This is pseudocode, not a supplied master API. Each exchange represents
+continued cyclic process service, with a timeout and fault handling in
+the host:
+
+\begin{verbatim}
+exchange(control=0x0000, mode=0, magnet=0)
+wait_until((status & 0x007F) == 0x0050)
+exchange(control=0x0006, mode=0, magnet=0)
+wait_until((status & 0x007F) == 0x0031)
+exchange(control=0x0007, mode=0, magnet=0)
+wait_until((status & 0x007F) == 0x0033)
+exchange(control=0x000F, mode=0, magnet=0)
+wait_until((status & 0x007F) == 0x0037)
+
+exchange(control=0x000F, mode=0, magnet=0x01)
+exchange(control=0x000F, mode=0, magnet=0x00)
+wait_beyond_lockout_and_board_recharge_interval()
+exchange(control=0x000F, mode=0, magnet=0x02)
+exchange(control=0x000F, mode=0, magnet=0x00)
+\end{verbatim}
+
+\section{Physical button}
+
+Pressing the active-low button starts a timer. Releasing it stops the
+timer. Holding it for about one second directly attempts a
+demagnetization pulse. This path bypasses the application's
+operation-enabled state check but still respects pulse limits, dead
+time, and the overtemperature flag.
+
+The button is not serviced while the MCU is halted. A blocked button
+request is not retried automatically; release and press again if a
+retry is appropriate. Do not treat the button as independent of
+firmware execution or pulse-energy availability.
+
+\chapter{Read and interpret telemetry}
+\label{sec:telemetry}
+
+\section{Temperature}
+
+Divide \code{0x2040:01} by 100 to obtain degrees Celsius; for example,
+\code{2534} represents 25.34\,$^{\circ}$C. The active sensor model is
+PT1000. Disconnected/out-of-range detection can leave this exported
+value unchanged, so inspect the error code as well.
+
+\section{IMU and distance data}
+
+The ten IMU fields at \code{0x6090:01}--\code{0x6090:0A} are raw
+signed 16-bit report values: gyro XYZ, linear acceleration XYZ, then
+quaternion R/I/J/K. Apply the report-specific fixed-point conversion
+in the host. Firmware does not convert these to floating-point SI
+values or provide scale metadata.
+
+ToF pixels use row-major order: pixel \code{i} corresponds to
+row \code{i / 8}, column \code{i mod 8}, and subindex \code{i + 1}.
+Distances are at \code{0x60A0:01}--\code{0x60A0:40}, with SNR at
+the matching subindex of \code{0x60A1}. The driver stores unsigned
+16-bit distances while the dictionary exports signed 16-bit values.
+Confirm sensor units, invalid codes, and physical orientation before
+interpreting them.
+
+\section{Inductive and Hall values}
+
+The four frequency/inductance registers are
+\code{0x60B0:01}--\code{0x60B0:04}; the four RP registers are
+\code{0x60B0:05}--\code{0x60B0:08}. They are raw unsigned 16-bit values,
+not converted frequencies in hertz.
+
+Hall data at \code{0x60C0} groups all four X channels, then all four
+Y channels, then all four Z channels. PDO values are raw signed
+registers. Internally the configured driver converts each axis with
+\code{raw / 65536 * 2 * 250}, computes magnitudes, and documents them
+as mT. Validate that conversion for the fitted device and calibration.
+
+\section{Force estimate and slip indication}
+
+The Hall model averages four magnitudes, estimates an air gap, and
+applies empirical force coefficients from \path{TMAG5273.h}. The
+controller multiplies the result by its software magnet flag, keeps
+a moving average of up to 20 samples, and publishes a REAL32 value
+intended to represent newtons.
+
+Each LDC compares fast and slow filters of its RP reading. Three or
+more channels indicating slip force the published estimate to zero.
+This does not itself trigger demagnetization or change the FSM.
+Because the moving average is not cleared when demagnetizing, old
+nonzero samples may briefly remain after magnet status becomes zero.
+
+The active model uses compiled coefficients, not the EEPROM parameter
+array or SDO calibration storage. Validate the estimate against the
+specific foot and surface before making load decisions.
+
+\section{Charger voltage and freshness}
+
+Capacitor voltage at \code{0x60D0:00} is in 10\,mV counts when a
+charger has initialized and communicates successfully. The default
+\code{USE_BATTERIES} definition skips that initialization, leaving the
+value at zero. Zero in this configuration is not a measured
+discharged condition.
+
+Sensor PDOs have no timestamps or per-sample validity bits. Failed
+or stalled acquisition may leave old or zero values. Observe both
+sensor behavior and diagnostics when checking a newly connected board.
+
+\chapter{Disable and shut down}
+
+For a normal release, independently support the mechanism, request
+demagnetization while operation is enabled, return the magnet command
+to zero, and verify physical release. Then write control word
+\code{0x0000} and wait for masked status \code{0x0050}. The disabled
+state disables charger command storage and asserts the discharge GPIO.
+Follow the board's physical discharge and power-removal procedure.
+Firmware does not confirm discharge completion.
+
+Control word \code{0x0007} disables operation into switched-on;
+\code{0x0006} returns toward ready; \code{0x0002} requests quick stop,
+with masked status \code{0x0017}. The quick-stop action is empty.
+Those state changes do not issue a demagnetization pulse.
+
+The SOES software watchdog has a nominal 100-call interval, about
+100\,ms at the intended polling rate. It can move EtherCAT to an
+error state, but no application safe-output hook is installed.
+Loss of EtherCAT, quick stop, disable, or MCU reset must not be
+assumed to cause magnetic release or an application discharge action.
+
+\chapter{Warnings, faults, and recovery}
+\label{sec:faults}
+
+\section{Temperature behavior}
+
+For a valid PT1000 reading, at least 65\,$^{\circ}$C sets an
+overtemperature warning; at least 80\,$^{\circ}$C requests a fatal
+fault reaction. At least 240\,$^{\circ}$C is instead classified as
+disconnected/out of range and raises a warning. The source has an
+intended clear branch at 50\,$^{\circ}$C, but also clears the flag in
+the 65--80\,$^{\circ}$C warning branch. Do not assume reliable
+80/50\,$^{\circ}$C hysteresis from the current implementation.
+
+\section{Fatal handler}
+
+The fault-reaction action calls \code{Error_Handler()}. It stops pulse
+outputs, asserts discharge, disables the charger command, attempts a
+charger exchange, disables interrupts, and halts indefinitely. The
+last fault status may not reach the master before communication stops.
+
+Correct the cause and reset or power-cycle the controller. Although
+the generic FSM defines fault status \code{0x0018} and fault-reset
+command \code{0x0080}, this fatal controller path does not transition
+to a serviceable fault state. A control-word reset is not a recovery
+mechanism for the halted firmware.
+
+\section{Error-code reference}
+
+Read SDO \code{0x603F:00}. The background callback rebuilds the value
+on every invocation, and later checks can replace earlier warnings;
+it is not an error history.
+
+\begin{longtable}{L{34mm}L{110mm}}
+\toprule
+Code & Meaning \\
+\midrule
+\endhead
+\code{0x0000} & No currently reported error \\
+\code{0x2220} & General overcurrent enum; not currently raised by the controller background logic \\
+\code{0x4300} & Overtemperature warning or fault, depending on threshold \\
+\code{0xFF01}--\code{0xFF0F} & Combined sensor initialization failures: low-nibble bits IMU=1, LDC=2, ToF=4, Hall=8 \\
+\code{0xFF10} & Timer initialization failure; sets fault bit, without directly entering fatal reaction \\
+\code{0xFF11} & Invalid EEPROM parameters; validation is currently a stub \\
+\code{0xFF12} & Charger overcurrent \\
+\code{0xFF13} & Charger overvoltage \\
+\code{0xFF14} & Charger watchdog fault \\
+\code{0xFF15} & Charger not responding during initialization \\
+\code{0xFF16} & Temperature sensor disconnected or out of range \\
+\code{0xFF17} & Gate-driver fault while enabled \\
+\code{0xFF18} & Invalid simultaneous requests seen by the operation action \\
+\bottomrule
+\end{longtable}
+
+For example, \code{0xFF05} indicates IMU and ToF initialization
+failure. Raising both magnet bits from zero normally cancels requests
+in the input callback, so it need not produce \code{0xFF18}.
+
+\section{LED indications}
+
+Initialization selects an alternating blue/green pattern, followed by
+cyan. Entry to switched-on selects all channels on; operation-enabled
+selects solid green. A fatal error selects fast red blinking.
+Sensor-specific animations exist in the driver, but the current
+initialization-warning path does not select them. Green is therefore
+not proof that every sensor initialized correctly.
+
+\chapter{Configuration and troubleshooting}
+
+\section{Settings that require source changes}
+
+\code{EPM_NUMBER} is a CMake cache setting. Battery mode,
+\code{MAGNETIZATION_TIME}, \code{DEAD_TIME}, force-model coefficients,
+temperature type, and temperature thresholds are source-level settings.
+Passing \code{-DUSE_BATTERIES=OFF} to CMake does not remove the
+unconditional header definition.
+
+The following writable SDOs currently provide storage with limited
+effects:
+
+\begin{longtable}{L{32mm}L{112mm}}
+\toprule
+Object & Current behavior \\
+\midrule
+\endhead
+\code{0x2100:01} & Pulse-time storage is not used by pulse generation. \\
+\code{0x2100:02} & EPM identity storage is initialized from the build; writes are not persisted. \\
+\code{0x2101:01}--\code{0x2101:FA} & 250 REAL32 storage elements; beginning is repurposed for Git version bytes at startup. No active model update or persistence hook is installed. \\
+\bottomrule
+\end{longtable}
+
+Ten floats are read from the I2C parameter EEPROM at startup, but
+validation is unconditional and those values are not used by the
+current force formula. Defining the compiler symbol \code{EEPROM_WRITE}
+causes an embedded image to be written on every boot of that firmware;
+reserve it for deliberate provisioning after reviewing the image.
+
+\section{Symptom checklist}
+
+\begin{longtable}{L{51mm}L{93mm}}
+\toprule
+Symptom & Check \\
+\midrule
+\endhead
+Missing SOES sources & Initialize the Git submodule and verify SSH access or a local HTTPS override. \\
+SPI compile error with GCC 14 & Existing receive-buffer pointer mismatch in \code{esc_address()}; see Chapter~\ref{sec:build}. \\
+Configuration pattern never finishes & Inspect \code{EEPROM_LOADED}, ESC reset, and power; startup has no readiness timeout. \\
+Master mapping does not match & Reconcile XML, compiled dictionary, and actual SII before commissioning. \\
+OP reached but no magnet pulse & Check application state, command edge, lockout, operation-entry timing, and temperature flags. \\
+Repeated request ignored & Send zero and allow it to be processed before a new rising edge. \\
+Force estimate zero & Inspect magnet flag, Hall data/initialization, and three-of-four LDC slip votes. \\
+Capacitor voltage zero & Default battery mode does not initialize charger telemetry. \\
+Temperature or sensor value stale & Check error code and driver/interrupt state; PDOs have no freshness flags. \\
+Red blinking, no communication & Fatal halt; correct the cause and reset. The manual button cannot run while halted. \\
+\bottomrule
+\end{longtable}
+
+\section{Implementation issues for integrators}
+
+The ESC read helper has a 128-byte termination buffer although
+mailboxes are configured for 512 bytes, and the read-length assertion
+is disabled. Review that path before using large mailbox transfers.
+The LDC read function supplies a stack-local transmit buffer to a
+nonblocking SPI transfer, which also merits review when investigating
+corrupt readings.
+
+Custom \code{NOLOAD} memory sections, some filter members without
+explicit initialization, shared foreground/interrupt data, blocking
+operations, and dynamic allocation in the control interrupt need
+hardware validation. Nominal timer rates alone do not establish
+execution-time guarantees. These observations are documented without
+changing the firmware.
+
+\appendix
+\chapter{Source references}
+
+\begin{longtable}{L{66mm}L{78mm}}
+\toprule
+Path relative to repository root & Purpose \\
+\midrule
+\endhead
+\path{Core/Src/main.cpp} & Entry point, command edge detection, HAL callbacks, fatal handler \\
+\path{Core/Inc/main.h} & GPIO and timer aliases \\
+\path{Core/Src/tim.c} & Timer prescalers and periods \\
+\path{Libs/Controller/FootController.cpp} & Initialization, state actions, pulse generation, telemetry, temperature checks \\
+\path{Libs/Controller/FootController.h} & Timing constants, battery selection, and SOES configuration \\
+\path{Libs/FSM/FSMTypes.hpp} & Control-word masks and status constants \\
+\path{Libs/FSM/FSM.hpp} & Error-code enumeration \\
+\path{Libs/SOES_Wrapper/autogenerated/slave_objectlist.c} & Compiled PDO/SDO dictionary \\
+\path{Libs/SOES_Wrapper/autogenerated/utypes.h} & Object storage types \\
+\path{Libs/SOES_Wrapper/hal/esc_hw.c} & SPI ESC access \\
+\path{Libs/Sensors/TMAG5273.cpp} & Hall conversion and empirical force model \\
+\path{Libs/Sensors/LDC1101.cpp} & Inductive acquisition and slip filters \\
+\path{CMakeLists.txt} & Application sources and EPM selection \\
+\path{CMakePresets.json} & Configure/build presets \\
+\path{wiki/Home.md} & Full codebase wiki and developer workflow \\
+\bottomrule
+\end{longtable}
+
+\end{document}
