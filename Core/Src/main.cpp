@@ -30,6 +30,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "FootController.h"
+#include "app_runtime.h"
 #include "utils.h"
 #include <stdio.h>
 #include <cstring>
@@ -166,7 +167,8 @@ int main(void)
   MX_TIM8_Init();
   MX_CRC_Init();
   /* USER CODE BEGIN 2 */
-  controller.init();
+  SWD_Init();
+  App_Start();
 
   
   
@@ -175,17 +177,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  SWD_Init();
-  while (1)
-  {
-    controller.hall3.read_magnitude();
-    controller.hall2.read_magnitude();
-    controller.hall1.read_magnitude();
-    controller.hall0.read_magnitude();
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-  }
+  while (1) { } // App_Start() does not return.
   /* USER CODE END 3 */
 }
 
@@ -267,153 +259,53 @@ void PeriphCommonClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-uint32_t counter = 0;
-uint32_t counter1 = 0;
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+void HAL_GPIO_EXTI_Callback(uint16_t pin)
 {
-  // Handle IMU Interrupt
-  // When the IMU interrupt pin is triggered, set the msg_ready flag to true to indicate that new IMU data is available and should be read within the next 10ms.
-  if(GPIO_Pin == IMU_INT_Pin) {
-    controller.imu.msgs_ready++;
-
-    ITM->PORT[0].u32 = ++counter1;
-  }
-
-  // Handle Button Press and Release
-  // On Button Press, start a timer to measure how long the button is held down. On Button Release, stop the timer.
-  // If the button is held down for more than a certain threshold (e.g., 1 second), trigger a demagnetization event.
-  else if(GPIO_Pin == BUTTON_Pin)
-  {
-    // Button Pressed (Falling edge)
-    if(HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin) == GPIO_PIN_RESET)
-    {
-      
-      (TIM_BUTTON)->Instance->CNT = 0;
+  if (pin == IMU_INT_Pin) App_ImuReadyISR();
+  else if (pin == TOF_INT_Pin) App_TofReadyISR();
+  else if (pin == BUTTON_Pin && App_IsReady()) {
+    if (HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin) == GPIO_PIN_RESET) {
+      TIM_BUTTON->Instance->CNT = 0;
+      __HAL_TIM_CLEAR_FLAG(TIM_BUTTON, TIM_FLAG_UPDATE);
       HAL_TIM_Base_Start_IT(TIM_BUTTON);
-
-    }
-    // Button Released (Rising edge)
-    else
-    {
-      HAL_TIM_Base_Stop_IT(TIM_BUTTON);
-    }
-  }
-
-  // Handle ToF interrupt
-  else if(GPIO_Pin == TOF_INT_Pin)
-  {
-    //TODO: read ToF data
-    controller.tof.clear_interrupt();
+    } else HAL_TIM_Base_Stop_IT(TIM_BUTTON);
   }
 }
 
-
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
 {
-  // Controller and Communication Loop
-  // This loop runs at 1kHz
-  if (htim == TIM_CONTROL)
-  {
-    controller.runControl();
-    controller.runCommunication();
-    controller.active_ldc->read_data(); // Read data from the currently active LDC
-
-    return;
-  }
-
-
-  // IMU Update Loop
-  // This loop runs at 400Hz
-  else if (htim == TIM_IMU)
-  {
-    controller.imu.update(); //Update IMU data
-  }
-
-
-  // Manual Demagnetization control
-  // This interrupt is triggered, if the button is pressed for more than 1 second.
-  else if (htim == TIM_BUTTON)
-  {
-    HAL_TIM_Base_Stop_IT(htim);
-    controller.requested_demagnetization =   true;
-    controller.requested_magnetization   =  false;
-    controller.magnetize(MAGNETIZATION_TIME);
-    controller.requested_demagnetization = false;
-    controller.requested_magnetization = false;
-  }
-
-  // Dead Time Timer
-  // This interrupt is triggered, if the dead time after a magnetization or demagnetization
-  else if(htim == DEAD_TIME_TIMER)
-  {
-    HAL_TIM_Base_Stop_IT(htim);
-    controller.dead_time_active = false; //Reset Dead Time Active
-  }
-  
-
-}
-
-void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
-{
-    if (hspi == LDC_SPI_HANDLE)
-    {
-        HAL_GPIO_WritePin(LDC0_NCS_GPIO_Port, LDC0_NCS_Pin, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(LDC1_NCS_GPIO_Port, LDC1_NCS_Pin, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(LDC2_NCS_GPIO_Port, LDC2_NCS_Pin, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(LDC3_NCS_GPIO_Port, LDC3_NCS_Pin, GPIO_PIN_SET);
-        controller.active_ldc->data_valid = true; // Set the data_valid flag for the currently active LDC
-        controller.active_ldc->slip_detector.update(controller.active_ldc->rx_data.rp_data); // Update slip detection for the currently active LDC
-        controller.active_ldc = controller.active_ldc->next; // Move to the next LDC for the next measurement
-    }
-    else if (hspi == TOF_SPI_HANDLE)
-    {
-        if(!controller.tof.interrupt_clear_pending) // Interrupt came from ToF message
-        {
-            controller.tof.data_valid = true;
-        }
-    }
-    else if (hspi == CHARGER_SPI_HANDLE)
-    {
-        // Charger SPI transfer complete
-        // Handle Charger status and faults here if needed
-        controller.charger.rx_data_validate();
-        controller.controller_error_word.charger_oc_fault = controller.charger.status.OC_fault;
-        controller.controller_error_word.charger_ov_fault = controller.charger.status.OV_fault;
-        controller.controller_error_word.charger_wd_fault = controller.charger.status.WD_fault;
-    }
-    else if (hspi == BNO086_SPI_HANDLE)
-    {
-        // IMU SPI transfer complete
-        // Handle IMU data here if needed
-        uint16_t report_id = bno_header.report_id;
-
-        controller.imu.read_report(report_id); // Read the report data from the IMU
-    }
-}
-
-void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
-{
-  if(hspi == BNO086_SPI_HANDLE)
-  {
-    HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_SET);
-
-    controller.imu.update_outputs(); // Update the IMU output data after receiving the report
+  if (timer == TIM_CONTROL) App_ControlTickISR();
+  else if (timer == TIM_BUTTON) {
+    HAL_TIM_Base_Stop_IT(timer);
+    App_ButtonHeldISR();
+  } else if (timer == DEAD_TIME_TIMER) {
+    HAL_TIM_Base_Stop_IT(timer);
+    App_DeadTimeISR();
   }
 }
 
-void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *spi) { App_SpiCompleteISR(spi, HAL_OK); }
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *spi) { App_SpiCompleteISR(spi, HAL_OK); }
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *spi) { App_SpiCompleteISR(spi, HAL_OK); }
+void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *spi) { App_SpiCompleteISR(spi, HAL_ERROR); }
+void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *i2c) { App_I2cCompleteISR(i2c, HAL_OK); }
+void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef *i2c) { App_I2cCompleteISR(i2c, HAL_OK); }
+void HAL_I2C_MasterRxCpltCallback(I2C_HandleTypeDef *i2c) { App_I2cCompleteISR(i2c, HAL_OK); }
+void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *i2c) { App_I2cCompleteISR(i2c, HAL_OK); }
+void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *i2c) { App_I2cCompleteISR(i2c, HAL_ERROR); }
+
+/* SOES invokes this in its sole owning task when process outputs stop.
+   Preserve attachment: inhibit commands/discharge, never issue a release pulse. */
+extern "C" void cb_safe_outputs()
 {
-  if (hspi == TOF_SPI_HANDLE)
-  {
-      if(controller.tof.interrupt_clear_pending) // Interrupt came from INT CLEAR message
-      {
-          controller.tof.interrupt_clear_pending = false;
-          controller.tof.get_ranging_data();
-      }else // Interrupt came from Ranging Data message, this interrupt should not happen
-      {
-          controller.tof.data_valid = false;
-      }
-  }
+  Obj.Control_Word = 0;
+  Obj.Magnet_Command = 0;
+  controller.fsm_.setControlWord(0);
+  controller.requested_magnetization = false;
+  controller.requested_demagnetization = false;
+  controller.prev_mag = controller.prev_demag = false;
+  controller.charger.tx_data.enable = 0;
+  HAL_GPIO_WritePin(DISCHARGE_GPIO_Port, DISCHARGE_Pin, GPIO_PIN_RESET);
 }
 
 /* USER CODE END 4 */
@@ -442,6 +334,18 @@ void MPU_Config(void)
   MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
 
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
+  // Explicit noncacheable DMA windows. BDMA buffers stay in D3 SRAM.
+  MPU_InitStruct.Number = MPU_REGION_NUMBER1;
+  MPU_InitStruct.BaseAddress = 0x24000000;
+  MPU_InitStruct.Size = MPU_REGION_SIZE_128KB;
+  MPU_InitStruct.SubRegionDisable = 0;
+  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1; // Normal, noncacheable memory
+  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+  MPU_InitStruct.Number = MPU_REGION_NUMBER2;
+  MPU_InitStruct.BaseAddress = 0x38000000;
+  MPU_InitStruct.Size = MPU_REGION_SIZE_16KB;
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
 
@@ -454,19 +358,24 @@ void MPU_Config(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  HAL_TIM_OnePulse_Stop(TIM_DRV1, CHANNEL_DRV1); //Stop DRV1
-  HAL_TIM_OnePulse_Stop(TIM_DRV2, CHANNEL_DRV2); //Stop DRV2
-  HAL_GPIO_WritePin(DISCHARGE_GPIO_Port, DISCHARGE_Pin, GPIO_PIN_RESET); //Discharge Caps
-
-  controller.ledController.set_animation(LED_ANIMATION_UNCAUGHT_EXCEPTION); // Set LED animation to indicate an error has occurred
-  controller.charger.tx_data.enable = 0; //Disable charging
-  controller.charger.transmit_receive();
-  for(int i = 0; i < 1000000; i++) __NOP(); //Wait for charger to disable
-  __disable_irq(); //Disable all interrupts
-  while (1)
-  {
-    
-  }
+  // This path also runs from faults/RTOS hooks: no I/O waits or scheduler calls.
+  __disable_irq();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_TIM1_CLK_ENABLE();
+  __HAL_RCC_TIM8_CLK_ENABLE();
+  TIM1->CR1 &= ~TIM_CR1_CEN;
+  TIM8->CR1 &= ~TIM_CR1_CEN;
+  TIM1->BDTR &= ~TIM_BDTR_MOE;
+  TIM8->BDTR &= ~TIM_BDTR_MOE;
+  GPIOC->BSRR = GD_nEN_Pin; // Disable gate drivers immediately.
+  GPIOA->BSRR = static_cast<uint32_t>(DISCHARGE_Pin) << 16U;
+  // Also establish output modes if a fatal error preceded MX_GPIO_Init().
+  GPIOC->MODER = (GPIOC->MODER & ~(3UL << 16U)) | (1UL << 16U);
+  GPIOA->MODER = (GPIOA->MODER & ~(3UL << 20U)) | (1UL << 20U);
+  controller.charger.tx_data.enable = 0;
+  __DSB();
+  while (1) { __NOP(); }
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT

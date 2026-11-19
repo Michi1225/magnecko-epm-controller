@@ -1,4 +1,7 @@
 #include "Charger.h"
+#include "app_runtime.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include "stm32h7xx_hal_crc.h"
 #include <cstdint>
 #include <cstring>
@@ -6,21 +9,16 @@
 ChargerData __attribute__((section(CHARGER_SECTION_NAME))) Charger::status;
 TransmitData __attribute__((section(CHARGER_SECTION_NAME))) Charger::tx_data;
 
+// BDMA can only access D3 SRAM. Never use the DTCM task stack as its buffer.
+alignas(32) static TransmitData wire_tx __attribute__((section(CHARGER_SECTION_NAME)));
+alignas(32) static ChargerData wire_rx __attribute__((section(CHARGER_SECTION_NAME)));
+static_assert(sizeof(TransmitData) == sizeof(ChargerData), "Charger frame sizes differ");
+
 
 Charger::Charger()
 {
-    Charger::status.ready = 0;
-    Charger::status.active = 0;
-    Charger::status.OC_fault = 0;
-    Charger::status.OV_fault = 0;
-    Charger::status.WD_fault = 0;
-    Charger::status.vin_10mV = 0;
-    Charger::status.vout_10mV = 0;
-    Charger::status.imeas_mA = 0;
-
-    Charger::tx_data.enable = 0;
-    Charger::tx_data.clear_faults = 0;
-
+    std::memset(&Charger::status, 0, sizeof(Charger::status));
+    std::memset(&Charger::tx_data, 0, sizeof(Charger::tx_data));
     this->initialized = false;
     this->data_valid = false;
 }
@@ -42,6 +40,7 @@ bool Charger::wait_ready(uint16_t timeout)
             this->initialized = true;
             return true;
         }
+        App_Delay(1);
     }
     return false;
 }
@@ -52,33 +51,29 @@ bool Charger::wait_ready(uint16_t timeout)
  */
 void Charger::transmit_receive()
 {
-    if(!this->initialized) return; // Return if charger is not initialized
-    if(HAL_SPI_GetState(CHARGER_SPI_HANDLE) != HAL_SPI_STATE_READY) return;
-    size_t tx_size_bytes = sizeof(Charger::tx_data) - sizeof(Charger::tx_data.crc);
-    Charger::tx_data.crc = HAL_CRC_Calculate(&hcrc, (uint32_t*)&Charger::tx_data, (uint32_t)tx_size_bytes);
-    this->data_valid = false; // Reset data_valid flag before starting the transfer
-    HAL_SPI_TransmitReceive_IT(CHARGER_SPI_HANDLE, (uint8_t *)&Charger::tx_data, (uint8_t *)&Charger::status, sizeof(Charger::status));
-
+    if (!initialized) return;
+    transmit_receive_init();
 }
 
 void Charger::transmit_receive_init()
 {
-
-    if(HAL_SPI_GetState(CHARGER_SPI_HANDLE) != HAL_SPI_STATE_READY) return;
-    size_t tx_size_bytes = sizeof(Charger::tx_data) - sizeof(Charger::tx_data.crc);
-    Charger::tx_data.crc = HAL_CRC_Calculate(&hcrc, (uint32_t*)&Charger::tx_data, (uint32_t)tx_size_bytes);
-    this->data_valid = false; // Reset data_valid flag before starting the transfer
-    HAL_SPI_TransmitReceive_IT(CHARGER_SPI_HANDLE, (uint8_t *)&Charger::tx_data, (uint8_t *)&Charger::status, sizeof(Charger::status));
+    // The service task owns SPI6/CRC. Control owns desired command fields.
+    taskENTER_CRITICAL();
+    std::memcpy(&wire_tx, &tx_data, sizeof(wire_tx));
+    taskEXIT_CRITICAL();
+    wire_tx.crc = HAL_CRC_Calculate(&hcrc, reinterpret_cast<uint32_t*>(&wire_tx),
+        sizeof(wire_tx) - sizeof(wire_tx.crc));
+    data_valid = false;
+    if (App_SpiTransfer(CHARGER_SPI_HANDLE, reinterpret_cast<uint8_t*>(&wire_tx),
+            reinterpret_cast<uint8_t*>(&wire_rx), sizeof(wire_rx), 10, 1) == HAL_OK)
+        rx_data_validate();
 }
 
 bool Charger::rx_data_validate()
 {
-    size_t rx_size_bytes = sizeof(Charger::status) - sizeof(Charger::status.crc);
-    uint32_t calculated_crc = HAL_CRC_Calculate(&hcrc, (uint32_t*)&Charger::status, (uint32_t)rx_size_bytes);
-    this->data_valid = (calculated_crc == Charger::status.crc);
-    if(!this->data_valid)
-    {
-        memset(&(Charger::status), 0, sizeof(Charger::status));
-    }
-    return this->data_valid;
+    const auto crc = HAL_CRC_Calculate(&hcrc, reinterpret_cast<uint32_t*>(&wire_rx),
+        sizeof(wire_rx) - sizeof(wire_rx.crc));
+    data_valid = crc == wire_rx.crc;
+    if (data_valid) std::memcpy(&status, &wire_rx, sizeof(status));
+    return data_valid;
 }

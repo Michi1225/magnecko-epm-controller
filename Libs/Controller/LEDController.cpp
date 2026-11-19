@@ -1,4 +1,5 @@
 #include "LEDController.h"
+#include "app_runtime.h"
 
 LEDController::LEDController()
 {
@@ -71,7 +72,7 @@ void LEDController::init()
         LED_DC_BLUE
     };
 
-    HAL_I2C_Mem_Write(LED_I2C_HANDLE, LED_I2C_ADDRESS << 1, LED_REG_DC, I2C_MEMADD_SIZE_8BIT, txdata, sizeof(txdata), 10);
+    App_I2cTransfer(LED_I2C_HANDLE, LED_I2C_ADDRESS << 1, LED_REG_DC, I2C_MEMADD_SIZE_8BIT, txdata, nullptr, sizeof(txdata), 10, 0);
 
 }
 
@@ -598,14 +599,14 @@ void LEDController::update_config()
     }
 
 
-    HAL_I2C_Mem_Write(LED_I2C_HANDLE, LED_I2C_ADDRESS << 1, 0x00, I2C_MEMADD_SIZE_8BIT, (uint8_t*)&config_frame, sizeof(config_frame), 10);
+    App_I2cTransfer(LED_I2C_HANDLE, LED_I2C_ADDRESS << 1, 0x00, I2C_MEMADD_SIZE_8BIT, (uint8_t*)&config_frame, nullptr, sizeof(config_frame), 10, 0);
 
 
     // Write Pattern Configuration
-    HAL_I2C_Mem_Write(LED_I2C_HANDLE, LED_I2C_ADDRESS << 1, LED_PATTERN_REG_START, I2C_MEMADD_SIZE_8BIT, (uint8_t*)&this->patterns, sizeof(this->patterns), 10);
+    App_I2cTransfer(LED_I2C_HANDLE, LED_I2C_ADDRESS << 1, LED_PATTERN_REG_START, I2C_MEMADD_SIZE_8BIT, (uint8_t*)&this->patterns, nullptr, sizeof(this->patterns), 10, 0);
 
     uint8_t update = 0x55;
-    HAL_I2C_Mem_Write(LED_I2C_HANDLE, LED_I2C_ADDRESS << 1, LED_UPDATE_CMD, I2C_MEMADD_SIZE_8BIT, (uint8_t*)&update, sizeof(update), 10);
+    App_I2cTransfer(LED_I2C_HANDLE, LED_I2C_ADDRESS << 1, LED_UPDATE_CMD, I2C_MEMADD_SIZE_8BIT, (uint8_t*)&update, nullptr, sizeof(update), 10, 0);
 
     // Start Engines
     this->start();
@@ -618,7 +619,7 @@ void LEDController::update_config()
 void LEDController::start()
 {
     uint8_t txdata = 0xFF;
-    HAL_I2C_Mem_Write(LED_I2C_HANDLE, LED_I2C_ADDRESS << 1, LED_START_CMD, I2C_MEMADD_SIZE_8BIT, &txdata, 1, 10);
+    App_I2cTransfer(LED_I2C_HANDLE, LED_I2C_ADDRESS << 1, LED_START_CMD, I2C_MEMADD_SIZE_8BIT, &txdata, nullptr, 1, 10, 0);
 }
 
 /**
@@ -627,5 +628,5 @@ void LEDController::start()
 void LEDController::stop()
 {
     uint8_t txdata = 0xAA;
-    HAL_I2C_Mem_Write(LED_I2C_HANDLE, LED_I2C_ADDRESS << 1, LED_STOP_CMD, I2C_MEMADD_SIZE_8BIT, &txdata, 1, 10);
+    App_I2cTransfer(LED_I2C_HANDLE, LED_I2C_ADDRESS << 1, LED_STOP_CMD, I2C_MEMADD_SIZE_8BIT, &txdata, nullptr, 1, 10, 0);
 }

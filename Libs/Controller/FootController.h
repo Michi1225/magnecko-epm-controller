@@ -12,6 +12,7 @@
 #include "Charger.h"
 #include "eeprom.h"
 #include "MovingAverage.h"
+#include "sensor_samples.h"
 #include "version.h"
 extern "C" {
     #include "ecat_slv.h"
@@ -19,6 +20,7 @@ extern "C" {
     #include "soes_pin_mapping_def.h"
     #include "thermistor.h"
  }
+extern "C" void cb_safe_outputs();
 
 #define MAGNETIZATION_TIME 5000 //5ms
 #define DEAD_TIME 10000 //100ms
@@ -35,7 +37,12 @@ extern "C" {
 #define EPM_NUMBER 1 // EPM number, needed for hw interface
 #endif
 
+#ifndef EPM_USE_BATTERIES
+#define EPM_USE_BATTERIES 1
+#endif
+#if EPM_USE_BATTERIES
 #define USE_BATTERIES
+#endif
 
 
 class FootController
@@ -72,7 +79,7 @@ private:
 
        .application_hook = NULL, /* hook in application loop called when
                                     DIG_process(DIG_PROCESS_APP_HOOK_FLAG) */
-       .safeoutput_override = NULL, /* user override of default safeoutput when stack
+       .safeoutput_override = cb_safe_outputs, /* user override of default safeoutput when stack
                                        stop outputs */
 
        .pre_object_download_hook = NULL, /* hook called before object download,
@@ -99,6 +106,7 @@ private:
     };
 
     float force_estimation_params[N_PARAMETERS];
+    uint32_t communication_tick_ms = 0;
 
 
     /**
@@ -166,6 +174,11 @@ public:
     TMAG5273 hall3 = TMAG5273(TMAG5273::D1);
     uint8_t contact_estimation = 0;
     MovingAverage<FORCE_ESTIMATE_WINDOW_SIZE> force_average;
+    HallSample hall_sample;
+    LdcSample ldc_sample;
+    ImuSample imu_sample;
+    TofSample tof_sample;
+    ChargerSample charger_sample;
     bool slip_detected = false;
 
 

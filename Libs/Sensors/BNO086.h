@@ -4,7 +4,7 @@
 
 #include "main.h"
 #include "stm32h725xx.h"
-#include <vector>
+#include <array>
 #include <utility>
 
 
@@ -45,26 +45,7 @@
 
 
 #define BNO086_SPI_HANDLE &hspi3
-#define BNO086_SECTION_NAME ".RAM"
 #define PACKED __attribute__((packed))
-
-struct __section(BNO086_SECTION_NAME) PACKED BNOHeader
-{
-    uint8_t shtp_header[4];
-    uint8_t time_stamp[5];
-    uint8_t report_id;
-};
-
-struct __section(BNO086_SECTION_NAME) PACKED SHTPHeader
-{
-    uint16_t length;
-    uint8_t channel;
-    uint8_t sequence;
-    uint8_t report_id;
-};
-
-extern BNOHeader bno_header;
-extern SHTPHeader shtp_header;
 
 typedef struct PACKED
 {
@@ -97,7 +78,19 @@ typedef struct PACKED
 class BNO086
 {
 private:
-    std::vector<std::pair<uint8_t, uint32_t>> features;
+    std::array<std::pair<uint8_t, uint32_t>, 6> features{};
+    unsigned feature_count = 0;
+    void add_feature(uint8_t id, uint32_t period) { features[feature_count++] = {id, period}; }
+    uint32_t report_times[3]{};
+    uint8_t reports_seen = 0;
+    uint8_t packet[512]{};
+    uint16_t packet_length = 0;
+    HAL_StatusTypeDef wait_for_message(uint32_t start_ms, uint16_t timeout_ms);
+    HAL_StatusTypeDef transfer_packet(const uint8_t *tx, uint16_t tx_length,
+                                     uint32_t start_ms, uint16_t timeout_ms);
+    HAL_StatusTypeDef process_packet();
+    bool feature_enabled(uint8_t id) const;
+    void reset_outputs();
     bool initialized;
     
     static VectorData gyro_data;
@@ -113,14 +106,14 @@ public:
     /**
      * @brief   Initialize BNO with the correct settings and define the Feature reports. 
      * @param[in]   timeout: Timeout for the initialization in ms
-     * @retval  HAL Status Code. 0 if all transmissions were successful
+     * @retval  HAL status; HAL_OK only after the startup messages are validated.
      */
     uint8_t init(uint16_t timeout = 1000);
 
     /**
      * @brief   Start feature reports, as defined in init()
      * @param[in]   timeout: Timeout for the start command in ms
-     * @retval  HAL Status Code. 0 if all transmissions were successful
+     * @retval  HAL status; HAL_OK only after each feature is acknowledged.
      */
     uint8_t start(uint16_t timeout);
 
@@ -133,17 +126,16 @@ public:
     uint8_t update();
 
 
-    uint8_t read_report(uint8_t report_id);
-
-    uint8_t update_outputs();
-
     uint8_t seqNum = 0;
-    uint8_t msgs_ready = 0;
+    volatile uint32_t msgs_ready = 0;
+    void on_interrupt() { if (msgs_ready != UINT32_MAX) ++msgs_ready; }
+    bool has_pending() const;
+    bool outputs_fresh(uint32_t now) const;
 
-    int16_t output_gyro[3];
-    int16_t output_accel[3];
-    int16_t output_lin_accel[3];
-    int16_t output_quat[4];
+    int16_t output_gyro[3]{};
+    int16_t output_accel[3]{};
+    int16_t output_lin_accel[3]{};
+    int16_t output_quat[4]{};
 
 };
 

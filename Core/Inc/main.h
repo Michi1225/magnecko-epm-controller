@@ -175,9 +175,9 @@ void Error_Handler(void);
 #define LDC_MOSI_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
-#define TIM_CONTROL &htim2
-#define TIM_IMU &htim4
-#define TIM_BUTTON &htim5
+#define TIM_CONTROL (&htim2)
+#define TIM_IMU (&htim4)
+#define TIM_BUTTON (&htim5)
 #define TIM_DRV1 (&htim1)
 #define CHANNEL_DRV1 TIM_CHANNEL_1
 #define TIM_DRV2 (&htim8)

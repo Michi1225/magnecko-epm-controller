@@ -1,314 +1,319 @@
 #include "BNO086.h"
-#include "cmsis_gcc.h"
-#include "stm32h725xx.h"
-#include "stm32h7xx_hal_spi.h"
-#include <cstdint>
+#include "app_runtime.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include <algorithm>
 #include <cstring>
 
+namespace {
+constexpr uint8_t control_channel = 2;
+constexpr uint8_t set_feature = 0xFD;
+constexpr uint8_t get_feature = 0xFC;
+constexpr uint8_t command_response = 0xF1;
 
-BNOHeader bno_header = {0, 0, 0};
-SHTPHeader shtp_header = {0, 0, 0, 0};
-
-
-__section(BNO086_SECTION_NAME) __aligned(4) uint8_t dummy[128] = {0};
-
-__section(BNO086_SECTION_NAME) __aligned(4) uint8_t advertisement[284] = {0};
-
-__section(BNO086_SECTION_NAME) __aligned(4) uint8_t init_msg[40] = {0};
-
-__section(BNO086_SECTION_NAME) __aligned(4) uint8_t exec[10] = {0};
-
-VectorData BNO086::gyro_data        __section(BNO086_SECTION_NAME) = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_GYROSCOPE};
-VectorData BNO086::accel_data       __section(BNO086_SECTION_NAME) = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_ACCELEROMETER};
-VectorData BNO086::mag_data         __section(BNO086_SECTION_NAME) = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_MAGNETOMETER};
-VectorData BNO086::lin_accel_data   __section(BNO086_SECTION_NAME) = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_LINEAR_ACCELERATION};
-VectorData BNO086::grav_data        __section(BNO086_SECTION_NAME) = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_GRAVITY};
-RotationVectorData BNO086::rot_data __section(BNO086_SECTION_NAME) = {0, 0, 0, 0, 0, 0, 0, 0, BNO086_Q_POINT_ROTATION, BNO086_Q_POINT_ACCURACY_ROTATION};
-
-
-static void read_dummy()
-{
-    HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_RESET);
-    HAL_SPI_Receive(BNO086_SPI_HANDLE, (uint8_t *)&shtp_header, sizeof(shtp_header), 10);
-    //TODO: Validate header.
-    size_t bytes_to_read = (shtp_header.length & 0x7FFF) - sizeof(shtp_header);
-    if(bytes_to_read > 10 && bytes_to_read < 128) HAL_SPI_Receive(BNO086_SPI_HANDLE, dummy, bytes_to_read, 10);
-    HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_SET);
-    // HAL_SPI_Receive(BNO086_SPI_HANDLE, (uint8_t *)dummy, 21, 10);
-    // for(int i = 0; i < 100; i++) __NOP();
-    // __NOP();
+uint16_t read16(const uint8_t *bytes) {
+    return bytes[0] | (static_cast<uint16_t>(bytes[1]) << 8);
+}
+uint32_t read32(const uint8_t *bytes) {
+    return read16(bytes) | (static_cast<uint32_t>(read16(bytes + 2)) << 16);
+}
+uint16_t control_report_size(uint8_t id) {
+    switch (id) {
+    case get_feature: return 17;
+    case command_response: return 16;
+    case 0xF8: return 16; // Product ID response.
+    default: return 0;
+    }
 }
 
-
-BNO086::BNO086()
-{
-    this->msgs_ready = 0;
-    this->seqNum = 0;
-    this->features.clear();
-    this->initialized = false;
-    memset(dummy, 0, sizeof(dummy));
-    BNO086::gyro_data = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_GYROSCOPE};
-    BNO086::lin_accel_data = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_LINEAR_ACCELERATION};
-    BNO086::rot_data = {0, 0, 0, 0, 0, 0, 0, 0, BNO086_Q_POINT_ROTATION, BNO086_Q_POINT_ACCURACY_ROTATION};
-    BNO086::accel_data = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_ACCELEROMETER};
-    __NOP();
+// H_INTN is deasserted by CS, not by completion of a packet. Keep CS low
+// throughout the header and payload, including all asynchronous SPI waits.
+struct ChipSelect {
+    ChipSelect() { HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_RESET); }
+    ~ChipSelect() { HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_SET); }
+};
+struct Wake {
+    Wake() { HAL_GPIO_WritePin(IMU_WAKE_GPIO_Port, IMU_WAKE_Pin, GPIO_PIN_RESET); }
+    ~Wake() { HAL_GPIO_WritePin(IMU_WAKE_GPIO_Port, IMU_WAKE_Pin, GPIO_PIN_SET); }
+};
 }
 
+VectorData BNO086::gyro_data{};
+VectorData BNO086::accel_data{};
+VectorData BNO086::mag_data{};
+VectorData BNO086::lin_accel_data{};
+VectorData BNO086::grav_data{};
+RotationVectorData BNO086::rot_data{};
+
+BNO086::BNO086() : initialized(false) { reset_outputs(); }
+
+void BNO086::reset_outputs()
+{
+    reports_seen = 0;
+    std::memset(report_times, 0, sizeof(report_times));
+    std::memset(output_accel, 0, sizeof(output_accel));
+    std::memset(output_gyro, 0, sizeof(output_gyro));
+    std::memset(output_lin_accel, 0, sizeof(output_lin_accel));
+    std::memset(output_quat, 0, sizeof(output_quat));
+    gyro_data = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_GYROSCOPE};
+    accel_data = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_ACCELEROMETER};
+    mag_data = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_MAGNETOMETER};
+    lin_accel_data = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_LINEAR_ACCELERATION};
+    grav_data = {0, 0, 0, 0, 0, 0, BNO086_Q_POINT_GRAVITY};
+    rot_data = {0, 0, 0, 0, 0, 0, 0, 0, BNO086_Q_POINT_ROTATION, BNO086_Q_POINT_ACCURACY_ROTATION};
+}
+
+HAL_StatusTypeDef BNO086::wait_for_message(uint32_t start_ms, uint16_t timeout_ms)
+{
+    while (HAL_GetTick() - start_ms < timeout_ms) {
+        // The BNO086 retries unserviced interrupts after ~10 ms. Edge counts
+        // therefore do not represent queued packets and can outlive readiness.
+        if (HAL_GPIO_ReadPin(IMU_INT_GPIO_Port, IMU_INT_Pin) == GPIO_PIN_RESET) {
+            taskENTER_CRITICAL();
+            msgs_ready = 0;
+            taskEXIT_CRITICAL();
+            return HAL_OK;
+        }
+        App_Delay(1);
+    }
+    return HAL_TIMEOUT;
+}
+
+HAL_StatusTypeDef BNO086::transfer_packet(const uint8_t *tx, uint16_t tx_length,
+                                         uint32_t start_ms, uint16_t timeout_ms)
+{
+    packet_length = 0;
+    ChipSelect selected;
+    auto transfer = [&](const uint8_t *out, uint8_t *in, uint16_t size) {
+        const uint32_t elapsed = HAL_GetTick() - start_ms;
+        if (elapsed >= timeout_ms) return HAL_TIMEOUT;
+        return App_SpiTransfer(BNO086_SPI_HANDLE, out, in, size,
+            std::min<uint32_t>(10, timeout_ms - elapsed), 0);
+    };
+    // Always drive MOSI: receive-only mode can leave the previous command's
+    // last bit on the wire. A zero SHTP length denotes no outgoing packet.
+    uint8_t zeros[128]{};
+    auto status = transfer(tx ? tx : zeros, packet, 4);
+    if (status != HAL_OK) return status;
+    const uint16_t length = read16(packet) & 0x7FFF;
+    if (length != 0 && (length < 4 || length > sizeof(packet))) return HAL_ERROR;
+    const uint16_t wire_length = std::max<uint16_t>(length, tx_length);
+    for (uint16_t offset = 4; offset < wire_length;) {
+        const uint16_t chunk = std::min<uint16_t>(sizeof(zeros), wire_length - offset);
+        std::memset(zeros, 0, chunk);
+        if (tx && offset < tx_length)
+            std::memcpy(zeros, tx + offset, std::min<uint16_t>(chunk, tx_length - offset));
+        status = transfer(zeros, packet + offset, chunk);
+        if (status != HAL_OK) return status;
+        offset += chunk;
+    }
+    // We consume whole packets. Reject continuation fragments rather than
+    // decoding a partial report as a new one.
+    if (packet[1] & 0x80) return HAL_ERROR;
+    packet_length = length;
+    return length || tx ? HAL_OK : HAL_BUSY;
+}
 
 uint8_t BNO086::init(uint16_t timeout)
 {
-
-    HAL_StatusTypeDef status = HAL_OK;
-
-    // If this object is re-used across a reboot-like re-init, the feature list
-    // must be reset. Otherwise repeated calls append to the same vector and grow
-    // it without bound on the heap.
-    this->features.clear();
-
-    //Set feature reports to be set up
+    const uint32_t start_time = HAL_GetTick();
+    initialized = false;
+    reset_outputs();
+    seqNum = 0;
+    feature_count = 0;
 #if ENABLE_ACCEL
-    this->features.push_back(std::make_pair(BNO086_ID_ACCELEROMETER,        BNO086_PERIOD_ACCELEROMETER));
+    add_feature(BNO086_ID_ACCELEROMETER, BNO086_PERIOD_ACCELEROMETER);
 #endif
 #if ENABLE_ROT
-    this->features.push_back(std::make_pair(BNO086_ID_ROTATION,          BNO086_PERIOD_ROTATION));
+    add_feature(BNO086_ID_ROTATION, BNO086_PERIOD_ROTATION);
 #endif
 #if ENABLE_GYRO
-    this->features.push_back(std::make_pair(BNO086_ID_GYROSCOPE,            BNO086_PERIOD_GYROSCOPE));
+    add_feature(BNO086_ID_GYROSCOPE, BNO086_PERIOD_GYROSCOPE);
 #endif
 #if ENABLE_LIN_ACCEL
-    this->features.push_back(std::make_pair(BNO086_ID_LINEAR_ACCELERATION,  BNO086_PERIOD_LINEAR_ACCELERATION));
+    add_feature(BNO086_ID_LINEAR_ACCELERATION, BNO086_PERIOD_LINEAR_ACCELERATION);
 #endif
 #if ENABLE_GRAVITY
-    this->features.push_back(std::make_pair(BNO086_ID_GRAVITY,              BNO086_PERIOD_GRAVITY));
+    add_feature(BNO086_ID_GRAVITY, BNO086_PERIOD_GRAVITY);
 #endif
 #if ENABLE_MAG
-    this->features.push_back(std::make_pair(BNO086_ID_MAGNETOMETER,         BNO086_PERIOD_MAGNETOMETER));
+    add_feature(BNO086_ID_MAGNETOMETER, BNO086_PERIOD_MAGNETOMETER);
 #endif
-
-
-
-    //Reset BNO
-    // HAL_NVIC_DisableIRQ(EXTI2_IRQn); //Disable HINT_N interrupt
+    HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_SET);
+    // BOOTN selects normal firmware; PS0/WAKE must stay high through the first
+    // H_INTN assertion so a retry also selects SPI rather than UART.
+    HAL_GPIO_WritePin(IMU_BOOTN_GPIO_Port, IMU_BOOTN_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(IMU_WAKE_GPIO_Port, IMU_WAKE_Pin, GPIO_PIN_SET);
     HAL_GPIO_WritePin(IMU_NRST_GPIO_Port, IMU_NRST_Pin, GPIO_PIN_RESET);
-    HAL_Delay(0);
+    App_Delay(10);
+    // As in CEVA's SPI HAL, establish the clock's mode-3 idle level before
+    // selecting the sensor for the first time. The H7 retains it with
+    // MasterKeepIOState enabled. No sensor packet is clocked while in reset.
+    uint8_t dummy_tx = 0, dummy_rx = 0;
+    HAL_StatusTypeDef clock_status = HAL_TIMEOUT;
+    const uint32_t elapsed = HAL_GetTick() - start_time;
+    if (elapsed < timeout)
+        clock_status = App_SpiTransfer(BNO086_SPI_HANDLE, &dummy_tx, &dummy_rx, 1,
+            std::min<uint32_t>(10, timeout - elapsed), 0);
+    taskENTER_CRITICAL();
+    msgs_ready = 0;
+    taskEXIT_CRITICAL();
     HAL_GPIO_WritePin(IMU_NRST_GPIO_Port, IMU_NRST_Pin, GPIO_PIN_SET);
+    if (clock_status != HAL_OK) return clock_status;
 
-
-    //After reset, we have to wait for BNO to assert HINT_N
-    // while(HAL_GPIO_ReadPin(IMU_INT_GPIO_Port, IMU_INT_Pin) == GPIO_PIN_RESET);
-    // HAL_NVIC_EnableIRQ(EXTI2_IRQn); //Enable HINT_N interrupt
-
-
-    uint32_t start_time = HAL_GetTick();
-    //Read advertisemsent
-    while(this->msgs_ready == 0);
-    do
-    {
-        if((HAL_GetTick() - start_time) > timeout) return HAL_TIMEOUT;
-    } while(this->msgs_ready == 0);
-
-
-    this->msgs_ready = 0;
-    HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_RESET);
-    if(HAL_SPI_Receive(BNO086_SPI_HANDLE, advertisement, 284, 10) != HAL_OK) status = HAL_ERROR;
-    HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_SET);
-    
-    //read initialize response
-    do
-    {
-        if((HAL_GetTick() - start_time) > timeout) return HAL_TIMEOUT;
-    } while(this->msgs_ready == 0);
-    this->msgs_ready = 0;
-    HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_RESET);
-    if(HAL_SPI_Receive(BNO086_SPI_HANDLE, init_msg, 20, 100) != HAL_OK) status = HAL_ERROR;
-    HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_SET);
-
-    //read message from executable
-    do
-    {
-        if((HAL_GetTick() - start_time) > timeout) return HAL_TIMEOUT;
-    } while(this->msgs_ready == 0);
-    this->msgs_ready = 0;
-    HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_RESET);
-    if(HAL_SPI_Receive(BNO086_SPI_HANDLE, exec, 5, 10) != HAL_OK) status = HAL_ERROR;
-    HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_SET);
-
-    if(status == HAL_OK) this->initialized = true;
-
-    return status;
+    bool advertised = false, reset = false, ready = false;
+    while (!(advertised && reset && ready)) {
+        auto status = wait_for_message(start_time, timeout);
+        if (status != HAL_OK) return status;
+        status = transfer_packet(nullptr, 0, start_time, timeout);
+        if (status == HAL_BUSY) { App_Delay(1); continue; }
+        if (status != HAL_OK) return status;
+        if (packet_length > 4 && packet[2] == 0 && packet[4] == 0) advertised = true;
+        if (packet_length == 5 && packet[2] == 1 && packet[4] == 1) reset = true;
+        if (packet_length >= 20 && packet[2] == control_channel &&
+            packet[4] == command_response && packet[6] == 0x84 && packet[10] == 1) {
+            if (packet[9] != 0) return HAL_ERROR; // Initialization status R0.
+            ready = true;
+        }
+    }
+    initialized = true;
+    return HAL_OK;
 }
-
 
 uint8_t BNO086::start(uint16_t timeout)
 {
-    if(!this->initialized) return 1; //BNO not initialized
-
-    uint32_t start_time = HAL_GetTick();
-
-    //Wake up BNO
-    HAL_GPIO_WritePin(IMU_WAKE_GPIO_Port, IMU_WAKE_Pin, GPIO_PIN_RESET);
-    while(this->msgs_ready == 0)
-    {
-        if((HAL_GetTick() - start_time) > timeout) return HAL_TIMEOUT;
-    }
-    this->msgs_ready = 0;
-    HAL_GPIO_WritePin(IMU_WAKE_GPIO_Port, IMU_WAKE_Pin, GPIO_PIN_SET);
-
-    uint8_t errorcode = 0;
-    uint8_t rxBytes[128] = {0};
-    uint8_t txBytes[21] = {0};
-    
-
-    
-
-    for(auto& [id, period]: this->features)
-    {
-        txBytes[0] = 0x15;
-        txBytes[1] = 0x00;
-        txBytes[2] = 0x02;
-        txBytes[3] = this->seqNum;
-        txBytes[4] = 0xFD; // Set Feature Command (P.63): https://www.ceva-ip.com/wp-content/uploads/2019/10/SH-2-Reference-Manual.pdf
-
-
-        txBytes[5] = id; //Report ID: Rotation Vector
-        txBytes[6] = 0b00001000; // Feature Flags (P. 62)
-        txBytes[7] = 0x00; //Change Sensitivity LSB         --> Sensitivity only changes, how often new reports are generated, but not how often the corresponding interrupt is asserted.
-        txBytes[8] = 0x00; //Change Sensitivity MSB
-        txBytes[9] = (period & 0x000000FF);          //Report Interval in us LSB
-        txBytes[10] = (period & 0x0000FF00) >> 8;
-        txBytes[11] = (period & 0x00FF0000) >> 16;
-        txBytes[12] = (period & 0xFF000000) >> 24;    //Report Interval in us MSB
-        txBytes[13] = 0xFF;      //Batch Interval: Don't trigger delivery based on time between sampling and report interval LSB
-        txBytes[14] = 0xFF;      
-        txBytes[15] = 0xFF;
-        txBytes[16] = 0xFF;     //Batch Interval MSB
-        txBytes[17] = 0x00;     //Sensor-specific configuration
-        txBytes[18] = 0x00;
-        txBytes[19] = 0x00;
-        txBytes[20] = 0x00;
-
-        // if(this->msgs_ready > 0) read_dummy(); //Clear any pending messages, because we don't care about them
-        HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_RESET);
-        errorcode = HAL_SPI_TransmitReceive(BNO086_SPI_HANDLE, txBytes, rxBytes, 21, 1000);
-        HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_SET);
-        if(errorcode != HAL_OK) return errorcode;
-
-        this->seqNum = (this->seqNum + 1) % 256;
-
-        //read Get Feature Response
-        //this response is sent unsolicited on rate change
-        do
+    if (!initialized) return HAL_ERROR;
+    const uint32_t start_time = HAL_GetTick();
+    for (unsigned feature = 0; feature < feature_count; ++feature) {
+        const auto [id, period] = features[feature];
+        uint8_t tx[21] = {21, 0, control_channel, seqNum, set_feature, id, 0x08};
+        for (unsigned byte = 0; byte < 4; ++byte) tx[9 + byte] = period >> (8 * byte);
+        // Zero batch interval requests immediate delivery, rather than keeping
+        // up to UINT32_MAX microseconds of data in the sensor's batch queue.
+        HAL_StatusTypeDef status;
         {
-            /* code */
-            while(this->msgs_ready == 0)
-            {
-                if((HAL_GetTick() - start_time) > timeout) return HAL_TIMEOUT;
-            }
-            this->msgs_ready = 0;
-            read_dummy();
-        } while (shtp_header.report_id != 0xFC);
-
-        HAL_Delay(0);
+            Wake awake;
+            status = wait_for_message(start_time, timeout);
+            if (status != HAL_OK) return status;
+            status = transfer_packet(tx, sizeof(tx), start_time, timeout);
+        }
+        if (status != HAL_OK) return status;
+        ++seqNum;
+        // SPI is full duplex. Preserve and process any packet received while
+        // sending, including packets longer than the outgoing command.
+        status = process_packet();
+        if (status != HAL_OK) return status;
+        for (;;) {
+            if (feature_enabled(id)) break;
+            status = wait_for_message(start_time, timeout);
+            if (status != HAL_OK) return status;
+            status = transfer_packet(nullptr, 0, start_time, timeout);
+            if (status == HAL_BUSY) { App_Delay(1); continue; }
+            if (status != HAL_OK) return status;
+            status = process_packet();
+            if (status != HAL_OK) return status;
+        }
     }
+    return HAL_OK;
+}
 
+bool BNO086::feature_enabled(uint8_t id) const
+{
+    if (packet_length < 4 || packet[2] != control_channel) return false;
+    // Rate changes can generate responses for several sensors in one packet.
+    for (uint16_t offset = 4; offset < packet_length;) {
+        const uint16_t size = control_report_size(packet[offset]);
+        if (size == 0 || packet_length - offset < size) return false;
+        if (packet[offset] == get_feature && packet[offset + 1] == id &&
+            read32(packet + offset + 5) != 0) return true;
+        offset += size;
+    }
+    return false;
+}
 
-    return errorcode;
+bool BNO086::has_pending() const
+{
+    return initialized && HAL_GPIO_ReadPin(IMU_INT_GPIO_Port, IMU_INT_Pin) == GPIO_PIN_RESET;
+}
 
+bool BNO086::outputs_fresh(uint32_t now) const
+{
+    return (!ENABLE_LIN_ACCEL || ((reports_seen & 1) && now - report_times[0] <= 50)) &&
+           (!ENABLE_GYRO || ((reports_seen & 2) && now - report_times[1] <= 50)) &&
+           (!ENABLE_ROT || ((reports_seen & 4) && now - report_times[2] <= 50));
 }
 
 uint8_t BNO086::update()
 {
-    if(!this->initialized) return 1; //BNO not initialized
-    uint8_t errorcode = 0;
-    while(this->msgs_ready > 0)
-    {
-        this->msgs_ready--;
-        
-        //read header
-        memset(dummy, 0, 10);
-        HAL_GPIO_WritePin(IMU_NCS_GPIO_Port, IMU_NCS_Pin, GPIO_PIN_RESET);
-        errorcode = HAL_SPI_TransmitReceive_IT(BNO086_SPI_HANDLE, dummy, (uint8_t *)&bno_header, sizeof(bno_header));
-    }
-  
-
-    return errorcode;
-
+    if (!has_pending()) return HAL_BUSY;
+    const uint32_t start_time = HAL_GetTick();
+    auto status = wait_for_message(start_time, 10);
+    if (status != HAL_OK) return status;
+    status = transfer_packet(nullptr, 0, start_time, 10);
+    return status == HAL_OK ? process_packet() : status;
 }
 
-
-uint8_t BNO086::read_report(uint8_t report_id)
+HAL_StatusTypeDef BNO086::process_packet()
 {
-    uint8_t errorcode = 0;
-    switch (report_id)
-    {
-        case BNO086_ID_ACCELEROMETER:
-            //NOTE: This might introduce a hard fault, because of the packed struct.
-            //      If this is the case, every variable has to be copied seperately
-            errorcode |= HAL_SPI_Receive_IT(BNO086_SPI_HANDLE, (uint8_t *)&this->accel_data, 9);
-            break;
-        case BNO086_ID_GYROSCOPE:
-            errorcode |= HAL_SPI_Receive_IT(BNO086_SPI_HANDLE, (uint8_t *)&this->gyro_data, 9);
-            break;
-        case BNO086_ID_MAGNETOMETER:
-            errorcode |= HAL_SPI_Receive_IT(BNO086_SPI_HANDLE, (uint8_t *)&this->mag_data, 9);
-            break;
-        case BNO086_ID_LINEAR_ACCELERATION:
-            errorcode |= HAL_SPI_Receive_IT(BNO086_SPI_HANDLE, (uint8_t *)&this->lin_accel_data, 9);
-            break;
-        case BNO086_ID_ROTATION:
-            errorcode |= HAL_SPI_Receive_IT(BNO086_SPI_HANDLE, (uint8_t *)&this->rot_data, 13);
-            break;
-        case BNO086_ID_GRAVITY:
-            errorcode |= HAL_SPI_Receive_IT(BNO086_SPI_HANDLE, (uint8_t *)&this->grav_data, 9);
-            break;
-        default:
-            //TODO: Handle unknown report ID
-            read_dummy();
-            errorcode = 1;
-            break;
+    if (packet_length == 0) return HAL_OK;
+    if (packet[2] == 1 && packet_length == 5 && packet[4] == 1) {
+        initialized = false; // Sensor reset: configured reports are no longer running.
+        reset_outputs();
+        return HAL_ERROR;
     }
-    return errorcode;
+    // Advertisements and control responses have no sensor timestamp prefix.
+    if (packet[2] != 3 && packet[2] != 4) return HAL_OK;
+    for (uint16_t offset = 4; offset < packet_length;) {
+        const uint8_t id = packet[offset];
+        if (id == 0xFB || id == 0xFA) { // Base timestamp / timestamp rebase.
+            if (packet_length - offset < 5) return HAL_ERROR;
+            offset += 5;
+            continue;
+        }
+        if (id < BNO086_ID_ACCELEROMETER || id > BNO086_ID_GRAVITY) return HAL_ERROR;
+        const uint16_t size = id == BNO086_ID_ROTATION ? 14 : 10;
+        if (packet_length - offset < size) return HAL_ERROR;
+        const uint8_t *data = packet + offset + 1;
+        const bool usable = (data[1] & 0x03) >= 2; // Upper six bits encode delay.
+        int freshness = -1;
+        if (id == BNO086_ID_ROTATION) {
+            std::memcpy(&rot_data, data, 13);
+            if (usable) {
+                output_quat[0] = rot_data.quaternion_i;
+                output_quat[1] = rot_data.quaternion_j;
+                output_quat[2] = rot_data.quaternion_k;
+                output_quat[3] = rot_data.quaternion_real;
+            }
+            freshness = 2;
+        } else {
+            VectorData *target = nullptr;
+            int16_t *output = nullptr;
+            switch (id) {
+            case BNO086_ID_ACCELEROMETER: target = &accel_data; output = output_accel; break;
+            case BNO086_ID_GYROSCOPE: target = &gyro_data; output = output_gyro; freshness = 1; break;
+            case BNO086_ID_MAGNETOMETER: target = &mag_data; break;
+            case BNO086_ID_LINEAR_ACCELERATION: target = &lin_accel_data; output = output_lin_accel; freshness = 0; break;
+            case BNO086_ID_GRAVITY: target = &grav_data; break;
+            }
+            std::memcpy(target, data, 9);
+            if (usable && output) {
+                output[0] = target->axis_x;
+                output[1] = target->axis_y;
+                output[2] = target->axis_z;
+            }
+        }
+        if (freshness >= 0) {
+            const uint8_t mask = 1U << freshness;
+            if (usable) {
+                report_times[freshness] = HAL_GetTick();
+                reports_seen |= mask;
+            } else reports_seen &= ~mask;
+        }
+        offset += size;
+    }
+    return HAL_OK;
 }
 
-uint8_t BNO086::update_outputs()
-{
-    if(this->accel_data.status >= 2)
-    {
-        this->output_accel[0] = this->accel_data.axis_x;
-        this->output_accel[1] = this->accel_data.axis_y;
-        this->output_accel[2] = this->accel_data.axis_z;
-    }
-    if(this->gyro_data.status >= 2)
-    {
-        this->output_gyro[0] = this->gyro_data.axis_x;
-        this->output_gyro[1] = this->gyro_data.axis_y;
-        this->output_gyro[2] = this->gyro_data.axis_z;
-    }
-    if(this->rot_data.accuracy_estimate == 12868) // Magic Number
-    {
-        this->output_quat[0] = this->rot_data.quaternion_i;
-        this->output_quat[1] = this->rot_data.quaternion_j;
-        this->output_quat[2] = this->rot_data.quaternion_k;
-        this->output_quat[3] = this->rot_data.quaternion_real;
-    }
-    if(this->lin_accel_data.status >= 2)
-    {
-        this->output_lin_accel[0] = this->lin_accel_data.axis_x;
-        this->output_lin_accel[1] = this->lin_accel_data.axis_y;
-        this->output_lin_accel[2] = this->lin_accel_data.axis_z;
-    }
-
-    HAL_SPI_Receive(BNO086_SPI_HANDLE, (uint8_t*)&bno_header, 4,10);
-
-    return 0;
-}
-
-/*
- * @brief       Converts 16 bit quaternion to float
- * @param[in]   raw: raw quaternion data
- * @param[in]   q_point: quaternion fixed point position
- * @retval      Returns the quaternion value as float
- */
 float q_to_float(int16_t raw, uint8_t q_point)
 {
     return static_cast<float>(raw) / (1UL << q_point);

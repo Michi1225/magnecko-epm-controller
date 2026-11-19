@@ -95,6 +95,24 @@ LoopFillZerobss:
   cmp r2, r4
   bcc FillZerobss
 
+/* Clear DMA-visible NOLOAD sections before any C++ constructors run. */
+  ldr r2, =_sram
+  ldr r4, =_eram
+  movs r3, #0
+1:
+  cmp r2, r4
+  bcs 2f
+  str r3, [r2], #4
+  b 1b
+2:
+  ldr r2, =_sram_d3
+  ldr r4, =_eram_d3
+3:
+  cmp r2, r4
+  bcs 4f
+  str r3, [r2], #4
+  b 3b
+4:
 /* Call static constructors */
     bl __libc_init_array
 /* Call the application's entry point.*/

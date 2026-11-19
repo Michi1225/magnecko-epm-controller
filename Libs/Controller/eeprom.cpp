@@ -1,4 +1,6 @@
 #include "eeprom.h"
+#include "app_runtime.h"
+#include <cmath>
 
 void EEPROM_Write (uint16_t page, uint16_t offset, uint8_t *data, uint16_t size)
 {
@@ -23,15 +25,16 @@ void EEPROM_Write (uint16_t page, uint16_t offset, uint8_t *data, uint16_t size)
 		uint16_t MemAddress = startPage<<paddrposition | offset;
         uint16_t space_in_page = EEPROM_PAGE_SIZE - offset;
         uint16_t bytesremaining = (size < space_in_page) ? size : space_in_page;
+        if (bytesremaining == 0) break;
 
-		HAL_I2C_Mem_Write(EEPROM_I2C_HANDLE, EEPROM_I2C_ADDRESS << 1, MemAddress, I2C_MEMADD_SIZE_16BIT, data + pos, bytesremaining, 10);  // write the data to the EEPROM
+		App_I2cTransfer(EEPROM_I2C_HANDLE, EEPROM_I2C_ADDRESS << 1, MemAddress, I2C_MEMADD_SIZE_16BIT, data + pos, nullptr, bytesremaining, 10, 0);  // write the data to the EEPROM
 
 		startPage += 1;  // increment the page, so that a new page address can be selected for further write
 		offset=0;   // since we will be writing to a new page, so offset will be 0
 		size = size-bytesremaining;  // reduce the size of the bytes
 		pos += bytesremaining;  // update the position for the data buffer
 
-		HAL_Delay (4);  // Write cycle delay (5ms)
+		App_Delay (4);  // Write cycle delay (5ms)
 	}
 }
 
@@ -52,7 +55,8 @@ void EEPROM_Read (uint16_t page, uint16_t offset, uint8_t *data, uint16_t size)
 		uint16_t MemAddress = startPage<<paddrposition | offset;
         uint16_t space_in_page = EEPROM_PAGE_SIZE - offset;
         uint16_t bytesremaining = (size < space_in_page) ? size : space_in_page;
-		HAL_I2C_Mem_Read(EEPROM_I2C_HANDLE, EEPROM_I2C_ADDRESS << 1, MemAddress, I2C_MEMADD_SIZE_16BIT, data + pos, bytesremaining, 10);
+        if (bytesremaining == 0) break;
+		App_I2cTransfer(EEPROM_I2C_HANDLE, EEPROM_I2C_ADDRESS << 1, MemAddress, I2C_MEMADD_SIZE_16BIT, nullptr, data + pos, bytesremaining, 10, 0);
 		startPage += 1;
 		offset=0;
 		size = size-bytesremaining;

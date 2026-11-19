@@ -5,7 +5,7 @@
 
 
 constexpr SPI_HandleTypeDef* LDC_SPI_HANDLE = &hspi2; // SPI handle for LDC1614
-constexpr char* LDC_SECTION_NAME = ".RAM";
+constexpr const char* LDC_SECTION_NAME = ".RAM";
 
 constexpr uint8_t LDC1101_ADDR_RP_SET               = 0x01;
 constexpr uint8_t LDC1101_ADDR_TC1                  = 0x02;
@@ -54,8 +54,8 @@ public:
     bool slip_detected() const { return slip_detected_; }
 
 private:
-    int32_t fast_, slow_;
-    bool initialized_, slip_detected_ = false;
+    int32_t fast_ = 0, slow_ = 0;
+    bool initialized_ = false, slip_detected_ = false;
 };
 
 class LDC1101 {
@@ -69,7 +69,7 @@ public:
         uint8_t addr;
         uint16_t rp_data;
         uint16_t l_data;
-    }rx_data;
+    }rx_data{};
 
     LDC1101 *next;
 

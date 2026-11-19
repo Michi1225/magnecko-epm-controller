@@ -8,7 +8,7 @@
 
 
 constexpr SPI_HandleTypeDef* TOF_SPI_HANDLE = &hspi1; // SPI handle for TOF communication, adjust if needed
-constexpr char* TOF_SECTION_NAME = ".RAM"; // Section name for placing the TMF8829 object in RAM
+constexpr const char* TOF_SECTION_NAME = ".RAM"; // Section name for placing the TMF8829 object in RAM
 
 constexpr uint8_t TMF8829_APP_ID = 0x00;
 constexpr uint8_t TMF8829_MAJOR = 0x01;
@@ -219,7 +219,8 @@ private:
     TMF8829();
     HAL_StatusTypeDef init(uint16_t timeout = 1000);
     HAL_StatusTypeDef start_ranging();
-    void get_ranging_data();
-    void clear_interrupt();
+    HAL_StatusTypeDef get_ranging_data();
+    HAL_StatusTypeDef read_frame();
+    HAL_StatusTypeDef clear_interrupt();
     void update_data();
 };

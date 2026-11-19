@@ -5,6 +5,7 @@
 #include "stm32h7xx_hal.h"
 #include "stm32h7xx_hal_tim.h"
 #include "thermistor.h"
+#include "app_runtime.h"
 
 
 FootController::FootController() : fsm_(),
@@ -56,7 +57,7 @@ void FootController::init()
 {
     //LED Controller Initialization
     this->ledController.init();
-    this->ledController.set_animation(LED_ANIMATION_CONFIGURING);
+    App_RequestLed(LED_ANIMATION_CONFIGURING);
     uint8_t errorcode = 0;
 
     uint8_t tim_error = 0;
@@ -64,11 +65,11 @@ void FootController::init()
     tim_error |= HAL_TIM_OnePulse_Start(TIM_DRV2, CHANNEL_DRV2); //Start One Pulse for DRV2
 
 
-    HAL_Delay(100);
+    App_Delay(100);
 
     HAL_GPIO_WritePin(GD_nEN_GPIO_Port, GD_nEN_Pin, GPIO_PIN_RESET); //Enable Gate Drivers
 
-    HAL_Delay(100);
+    App_Delay(100);
 
     Obj.Magnet_Command = 0;
 
@@ -94,9 +95,13 @@ void FootController::init()
     
     //ECAT initialization
     HAL_GPIO_WritePin(nRST_ECAT_GPIO_Port, nRST_ECAT_Pin, GPIO_PIN_RESET);
-    HAL_Delay(0);
+    App_Delay(0);
     HAL_GPIO_WritePin(nRST_ECAT_GPIO_Port, nRST_ECAT_Pin, GPIO_PIN_SET);
-    while(!HAL_GPIO_ReadPin(EEPROM_LOADED_GPIO_Port, EEPROM_LOADED_Pin)){} //Wait for EEPROM to be loaded
+    const uint32_t esc_start = HAL_GetTick();
+    while (!HAL_GPIO_ReadPin(EEPROM_LOADED_GPIO_Port, EEPROM_LOADED_Pin)) {
+        if (HAL_GetTick() - esc_start >= 2000) Error_Handler();
+        App_Delay(1);
+    }
     ecat_slv_init(&this->config);
 
     // Temporarily store the git version in the Force_Estimate_Params array for debugging purposes
@@ -124,7 +129,7 @@ void FootController::init()
         }
     }
 
-    ts_init(); // Initialize temperature sensors
+    if (ts_init() != HAL_OK) Error_Handler(); // Required control measurement
 
     this->active_ldc = &this->ldc[0]; // Pointer to the currently active LDC, used for SPI communication
     this->ldc[0].next = &this->ldc[1];
@@ -146,7 +151,7 @@ void FootController::init()
 
 
 
-    HAL_Delay(10);
+    App_Delay(10);
     
     if(imu.start(1000) != 0) 
     {
@@ -169,8 +174,7 @@ void FootController::init()
 
 
     // Drive Timer Initialization
-    tim_error |= HAL_TIM_Base_Start_IT(TIM_CONTROL); //Start Control Timer
-    tim_error |= HAL_TIM_Base_Start_IT(TIM_IMU); //Start BNO Timer
+    // The runtime starts TIM2 after task owners and queues are ready.
 
     DEAD_TIME_TIMER->Instance->ARR = DEAD_TIME; //Set Dead Time Duration
 
@@ -179,16 +183,20 @@ void FootController::init()
 
     HAL_GPIO_WritePin(DISCHARGE_GPIO_Port, DISCHARGE_Pin, GPIO_PIN_SET);
 
-    this->ledController.set_animation(LED_ANIMATION_CYAN);
+    App_RequestLed(LED_ANIMATION_CYAN);
 }
 
 void FootController::runCommunication()
 {
-    ecat_slv();
-    if(this->charger.initialized)
-    {
-        this->charger.transmit_receive(); //Run Charger Communication Loop
-    }
+    const uint32_t now = HAL_GetTick();
+    uint32_t elapsed = now - communication_tick_ms;
+    communication_tick_ms = now;
+    // SOES counts watchdog calls. Account for elapsed milliseconds even when
+    // task releases coalesce, without replaying old PDO exchanges.
+    if (elapsed > 100) elapsed = 100;
+    while (elapsed--) DIG_process(DIG_PROCESS_WD_FLAG);
+    ecat_slv_poll();
+    DIG_process(DIG_PROCESS_OUTPUTS_FLAG | DIG_PROCESS_APP_HOOK_FLAG | DIG_PROCESS_INPUTS_FLAG);
 }
 
 void FootController::magnetize(uint16_t time)
@@ -221,7 +229,8 @@ void FootController::magnetize(uint16_t time)
     //Set Magnetization Status
     this->dead_time_active = true; //Set Dead Time Active
     DEAD_TIME_TIMER->Instance->CNT = 0; //Reset Dead Time Timer
-    HAL_TIM_Base_Start_IT(DEAD_TIME_TIMER); //Start Dead Time Timer
+    __HAL_TIM_CLEAR_FLAG(DEAD_TIME_TIMER, TIM_FLAG_UPDATE);
+    if (HAL_TIM_Base_Start_IT(DEAD_TIME_TIMER) != HAL_OK) Error_Handler();
 }
 
 void FootController::runControl()
@@ -362,56 +371,61 @@ FSMStatus FootController::FSM_bg(FSMStatus state, uint16_t &status_word, int8_t 
         warning_active = true;
     }
 
+    if (app_diagnostics.sensor_stale_mask) {
+        if (!warning_active) Obj.Error_Code = static_cast<uint16_t>(ErrorCodes::SENSOR_DATA_STALE);
+        warning_active = true;
+        status_word |= FSMStatusWord::WARNING_STATUS;
+    }
     if(!warning_active) status_word &= ~FSMStatusWord::WARNING_STATUS; // Clear warning status if no warnings are active
 
 
     //Handle Sensors
     //IMU
-    Obj.IMU_Data.Acc_X = this->imu.output_lin_accel[0];
-    Obj.IMU_Data.Acc_Y = this->imu.output_lin_accel[1];
-    Obj.IMU_Data.Acc_Z = this->imu.output_lin_accel[2];
+    Obj.IMU_Data.Acc_X = this->imu_sample.acceleration[0];
+    Obj.IMU_Data.Acc_Y = this->imu_sample.acceleration[1];
+    Obj.IMU_Data.Acc_Z = this->imu_sample.acceleration[2];
 
-    Obj.IMU_Data.Gyro_X = this->imu.output_gyro[0];
-    Obj.IMU_Data.Gyro_Y = this->imu.output_gyro[1];
-    Obj.IMU_Data.Gyro_Z = this->imu.output_gyro[2];
+    Obj.IMU_Data.Gyro_X = this->imu_sample.gyro[0];
+    Obj.IMU_Data.Gyro_Y = this->imu_sample.gyro[1];
+    Obj.IMU_Data.Gyro_Z = this->imu_sample.gyro[2];
 
-    Obj.IMU_Data.Quat_I = this->imu.output_quat[0];
-    Obj.IMU_Data.Quat_J = this->imu.output_quat[1];
-    Obj.IMU_Data.Quat_K = this->imu.output_quat[2];
-    Obj.IMU_Data.Quat_R = this->imu.output_quat[3];
+    Obj.IMU_Data.Quat_I = this->imu_sample.quaternion[0];
+    Obj.IMU_Data.Quat_J = this->imu_sample.quaternion[1];
+    Obj.IMU_Data.Quat_K = this->imu_sample.quaternion[2];
+    Obj.IMU_Data.Quat_R = this->imu_sample.quaternion[3];
 
 
     //ToF
     for(int i = 0; i < 64; i++)
     {
-        Obj.ToF_Distance[i] = this->tof.data_frame.pixel_data[i / 8][i % 8].distance;
-        Obj.ToF_SNR[i] = this->tof.data_frame.pixel_data[i / 8][i % 8].snr;
+        Obj.ToF_Distance[i] = this->tof_sample.distance[i];
+        Obj.ToF_SNR[i] = this->tof_sample.snr[i];
     }
 
 
 
     // LDC
-    uint8_t slip_off_votes = 0;
+    uint8_t slip_off_votes = this->ldc_sample.slip_votes;
     for(int i = 0; i < 4; i++)
     {
-        Obj.LDC_Frequency[i] = this->ldc[i].rx_data.l_data;
-        Obj.LDC_RP[i] = this->ldc[i].rx_data.rp_data;
-        slip_off_votes += this->ldc[i].slip_detector.slip_detected() ? 1 : 0; // Count the number of LDCs that detect slip
+        Obj.LDC_Frequency[i] = this->ldc_sample.frequency[i];
+        Obj.LDC_RP[i] = this->ldc_sample.rp[i];
+
     }
 
     // Hall Sensors
-    Obj.HALL_Mag_X[0] = this->hall0.raw_bx;
-    Obj.HALL_Mag_Y[0] = this->hall0.raw_by;
-    Obj.HALL_Mag_Z[0] = this->hall0.raw_bz;
-    Obj.HALL_Mag_X[1] = this->hall1.raw_bx;
-    Obj.HALL_Mag_Y[1] = this->hall1.raw_by;
-    Obj.HALL_Mag_Z[1] = this->hall1.raw_bz;
-    Obj.HALL_Mag_X[2] = this->hall2.raw_bx;
-    Obj.HALL_Mag_Y[2] = this->hall2.raw_by;
-    Obj.HALL_Mag_Z[2] = this->hall2.raw_bz;
-    Obj.HALL_Mag_X[3] = this->hall3.raw_bx;
-    Obj.HALL_Mag_Y[3] = this->hall3.raw_by;
-    Obj.HALL_Mag_Z[3] = this->hall3.raw_bz;
+    Obj.HALL_Mag_X[0] = this->hall_sample.raw[0][0];
+    Obj.HALL_Mag_Y[0] = this->hall_sample.raw[0][1];
+    Obj.HALL_Mag_Z[0] = this->hall_sample.raw[0][2];
+    Obj.HALL_Mag_X[1] = this->hall_sample.raw[1][0];
+    Obj.HALL_Mag_Y[1] = this->hall_sample.raw[1][1];
+    Obj.HALL_Mag_Z[1] = this->hall_sample.raw[1][2];
+    Obj.HALL_Mag_X[2] = this->hall_sample.raw[2][0];
+    Obj.HALL_Mag_Y[2] = this->hall_sample.raw[2][1];
+    Obj.HALL_Mag_Z[2] = this->hall_sample.raw[2][2];
+    Obj.HALL_Mag_X[3] = this->hall_sample.raw[3][0];
+    Obj.HALL_Mag_Y[3] = this->hall_sample.raw[3][1];
+    Obj.HALL_Mag_Z[3] = this->hall_sample.raw[3][2];
 
     
     // Force Estimation
@@ -421,7 +435,7 @@ FSMStatus FootController::FSM_bg(FSMStatus state, uint16_t &status_word, int8_t 
     //TODO: Implement slip detection for improved force estimation
 
     // Capacitor Voltage
-    Obj.Capacitor_Voltage = this->charger.status.vout_10mV;
+    Obj.Capacitor_Voltage = this->charger_sample.voltage;
 
 
     Obj.Status_Word = fsm_.getStatusWord();
@@ -439,7 +453,7 @@ FSMStatus FootController::FSM_switchOnDisabled(FSMStatus state, uint16_t &status
 {
     HAL_GPIO_WritePin(DISCHARGE_GPIO_Port, DISCHARGE_Pin, GPIO_PIN_RESET); //Discharge Caps
     this->charger.tx_data.enable = 0; //Disable Charging
-    if(state != FSMStatus::SWITCH_ON_DISABLED) this->ledController.set_animation(LED_ANIMATION_CYAN);
+    if(state != FSMStatus::SWITCH_ON_DISABLED) App_RequestLed(LED_ANIMATION_CYAN);
     status_word = status_word & ~FSMStatusWord::ROTOR_ALIGNING_STATUS;
     return state;
 }
@@ -456,7 +470,7 @@ FSMStatus FootController::FSM_readyToSwitchOn(FSMStatus state, uint16_t &status_
 FSMStatus FootController::FSM_switchedOn(FSMStatus state, uint16_t &status_word, int8_t &mode)
 {
     status_word = status_word & ~FSMStatusWord::ROTOR_ALIGNING_STATUS;
-    if(state != FSMStatus::SWITCHED_ON) this->ledController.set_animation(LED_ANIMATION_ALL);
+    if(state != FSMStatus::SWITCHED_ON) App_RequestLed(LED_ANIMATION_ALL);
     return state;
 }
 
@@ -464,7 +478,7 @@ FSMStatus FootController::FSM_operationEnabled(FSMStatus state, uint16_t &status
 {
     if(state != FSMStatus::OPERATION_ENABLED) // Just once when entering the state
     {
-       this->ledController.set_animation(LED_ANIMATION_APPLICATION_RUNNING);
+       App_RequestLed(LED_ANIMATION_APPLICATION_RUNNING);
        this->requested_demagnetization = false; //Reset requested demagnetization state
        this->requested_magnetization = false; //Reset requested magnetization state
     }
@@ -514,10 +528,10 @@ float FootController::force_estimation()
     // this->hall3.read_magnitude();
 
     return TMAG5273::force_estimation(
-        this->hall0.b_mag,
-        this->hall1.b_mag,
-        this->hall2.b_mag,
-        this->hall3.b_mag
+        this->hall_sample.magnitude[0],
+        this->hall_sample.magnitude[1],
+        this->hall_sample.magnitude[2],
+        this->hall_sample.magnitude[3]
     ) * this->status_magnetization;
 }
 

@@ -99,8 +99,9 @@ public:
         D1
     };
 
-    float bx,by,bz, b_mag;
-    int16_t raw_bx, raw_by, raw_bz;
+    float bx = 0, by = 0, bz = 0, b_mag = 0;
+    bool data_valid = false;
+    int16_t raw_bx = 0, raw_by = 0, raw_bz = 0;
 
     /**
      * @brief TMAG5273 constructor

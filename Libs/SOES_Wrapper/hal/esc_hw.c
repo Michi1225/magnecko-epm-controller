@@ -13,6 +13,7 @@
 
 #include "../SOES/soes/esc.h"
 #include "soes_pin_mapping_def.h"
+#include "app_runtime.h"
 #include <string.h>
 #include "stm32h7xx_hal.h"
 #include "main.h"
@@ -32,6 +33,7 @@
 static uint8_t read_termination[MAX_READ_SIZE] = { 0 };
 
 static pin_mapping_typedef * soes_pin_mapping;
+static uint32_t startup_ms;
 
 #define GPIO_ECAT_RESET    1 /* specific function to hold ESC reset on startup
                               * when emulating EEPROM
@@ -52,13 +54,16 @@ static void esc_address (uint16_t address, uint8_t command)
 
    /* Write (and read AL interrupt register) */
    
-   HAL_StatusTypeDef err = HAL_SPI_TransmitReceive(soes_pin_mapping->hspi, (uint8_t *) data, &ESCvar.ALevent, sizeof (data),100);
+   uint8_t event_bytes[2];
+   HAL_StatusTypeDef err = App_SpiTransfer(soes_pin_mapping->hspi,
+      data, event_bytes, sizeof(data), 2, 0);
    if(err != HAL_OK)
    {
       Error_Handler();
    }
    
-   ESCvar.ALevent = etohs (ESCvar.ALevent);
+   const uint16_t event = (uint16_t)event_bytes[0] | ((uint16_t)event_bytes[1] << 8);
+   ESCvar.ALevent = etohs(event);
 }
 
 /** ESC read function used by the Slave stack.
@@ -69,23 +74,22 @@ static void esc_address (uint16_t address, uint8_t command)
  */
 void ESC_read (uint16_t address, void *buf, uint16_t len)
 {
-   // ASSERT(len <= MAX_READ_SIZE);
+   // Bound SOES's internal DL-status startup wait without changing the stack.
+   if (!App_IsReady() && HAL_GetTick() - startup_ms >= 2000) Error_Handler();
+   if (len == 0) return;
    HAL_GPIO_WritePin(soes_pin_mapping->NCS_port,soes_pin_mapping->NCS_pin, GPIO_PIN_RESET);
-
-
-   /* Write address and command to device. */
-   esc_address (address, ESC_CMD_READ);
-
-   /* Here we want to read data and keep MOSI low (0x00) during
-    * all bytes except the last one where we want to pull it high (0xFF).
-    * Read (and write termination bytes).
-    */
-   HAL_StatusTypeDef err = HAL_SPI_TransmitReceive(soes_pin_mapping->hspi, read_termination + (MAX_READ_SIZE - len), buf, len,100);
-   if(err != HAL_OK)
-   {
-      Error_Handler();
+   esc_address(address, ESC_CMD_READ);
+   static const uint8_t zeros[MAX_READ_SIZE] = {0};
+   uint8_t *destination = buf;
+   while (len) {
+      const uint16_t chunk = len > MAX_READ_SIZE ? MAX_READ_SIZE : len;
+      // Only the final byte of the entire ESC transaction gets termination.
+      const uint8_t *tx = len > chunk ? zeros : read_termination + MAX_READ_SIZE - chunk;
+      if (App_SpiTransfer(soes_pin_mapping->hspi, tx, destination, chunk, 2, 0) != HAL_OK)
+         Error_Handler();
+      destination += chunk;
+      len -= chunk;
    }
-
    HAL_GPIO_WritePin(soes_pin_mapping->NCS_port,soes_pin_mapping->NCS_pin, GPIO_PIN_SET);
 }
 
@@ -97,41 +101,33 @@ void ESC_read (uint16_t address, void *buf, uint16_t len)
  */
 void ESC_write (uint16_t address, void *buf, uint16_t len)
 {
-   /* Select device. */
-
-   uint8_t dummy[len];
-
+   if (len == 0) return;
+   uint8_t dummy[MAX_READ_SIZE];
+   const uint8_t *source = buf;
    HAL_GPIO_WritePin(soes_pin_mapping->NCS_port,soes_pin_mapping->NCS_pin, GPIO_PIN_RESET);
-   /* Write address and command to device. */
-   esc_address (address, ESC_CMD_WRITE);
-   /* Write data. */
-   HAL_StatusTypeDef err = HAL_SPI_TransmitReceive(soes_pin_mapping->hspi, buf, dummy, len,100);
-   if(err != HAL_OK)
-   {
-      Error_Handler();//TODO: Better Error Handling
+   esc_address(address, ESC_CMD_WRITE);
+   while (len) {
+      const uint16_t chunk = len > MAX_READ_SIZE ? MAX_READ_SIZE : len;
+      if (App_SpiTransfer(soes_pin_mapping->hspi, source, dummy, chunk, 2, 0) != HAL_OK)
+         Error_Handler();
+      source += chunk;
+      len -= chunk;
    }
-   /* Un-select device. */
    HAL_GPIO_WritePin(soes_pin_mapping->NCS_port,soes_pin_mapping->NCS_pin, GPIO_PIN_SET);
 }
 
 void ESC_reset (void)
 {
-   volatile int timeout;
-   // Due to current hardware, hardware reset of the ET1100 is not possible.
-   while(timeout<10000000)
-   {
-      /* ECAT releases resetpin */
-      if(HAL_GPIO_ReadPin (soes_pin_mapping->EEPROM_loaded_port,soes_pin_mapping->EEPROM_loaded_pin)!=0)
-      {
-         break; // OK
-      }
-      timeout++;
-      HAL_Delay(30);
+   const uint32_t start = HAL_GetTick();
+   while (!HAL_GPIO_ReadPin(soes_pin_mapping->EEPROM_loaded_port,soes_pin_mapping->EEPROM_loaded_pin)) {
+      if (HAL_GetTick() - start >= 2000) Error_Handler();
+      App_Delay(1);
    }
 }
 
 void ESC_init (const esc_cfg_t * config)
 {
+   startup_ms = HAL_GetTick();
    // read the mapping of the physical ports from the user.
    soes_pin_mapping = (pin_mapping_typedef *) config->user_arg;
    read_termination[MAX_READ_SIZE - 1] = ESC_TERM;

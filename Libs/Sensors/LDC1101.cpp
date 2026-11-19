@@ -1,4 +1,5 @@
 #include "LDC1101.h"
+#include "app_runtime.h"
 #include "stm32h7xx_hal_def.h"
 #include "stm32h7xx_hal_spi.h"
 
@@ -27,8 +28,8 @@ HAL_StatusTypeDef LDC1101::init()
     config_data.addr = LDC1101_ADDR_STATUS | 0x80; // Read command
     do {
         HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_RESET);
-        HAL_SPI_TransmitReceive(LDC_SPI_HANDLE, (uint8_t *)&config_data, ready,
-                                sizeof(config_data), 10);
+        App_SpiTransfer(LDC_SPI_HANDLE, (uint8_t *)&config_data, ready,
+                                sizeof(config_data), 10, 0);
         HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_SET);
         attempts++;
         if(attempts > 100) 
@@ -44,7 +45,7 @@ HAL_StatusTypeDef LDC1101::init()
     config_data.data |= (0b000 << 4); // RP_MAX = 96kOhm
 
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_RESET);
-    status |= HAL_SPI_Transmit(LDC_SPI_HANDLE, (uint8_t *)&config_data, sizeof(config_data), 10);
+    status |= App_SpiTransfer(LDC_SPI_HANDLE, (uint8_t *)&config_data, nullptr, sizeof(config_data), 10, 0);
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_SET);
     config_data.data = 0x00; // Default value
 
@@ -55,7 +56,7 @@ HAL_StatusTypeDef LDC1101::init()
     
 
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_RESET);
-    status |= HAL_SPI_Transmit(LDC_SPI_HANDLE, (uint8_t *)&config_data, sizeof(config_data), 10);
+    status |= App_SpiTransfer(LDC_SPI_HANDLE, (uint8_t *)&config_data, nullptr, sizeof(config_data), 10, 0);
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_SET);
     config_data.data = 0x00; // Default value
 
@@ -65,7 +66,7 @@ HAL_StatusTypeDef LDC1101::init()
     config_data.data |= (0b11 << 6);     // C2 = 24pF
 
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_RESET);
-    status |= HAL_SPI_Transmit(LDC_SPI_HANDLE, (uint8_t *)&config_data, sizeof(config_data), 10);
+    status |= App_SpiTransfer(LDC_SPI_HANDLE, (uint8_t *)&config_data, nullptr, sizeof(config_data), 10, 0);
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_SET);
     config_data.data = 0x00; // Default value
 
@@ -75,7 +76,7 @@ HAL_StatusTypeDef LDC1101::init()
     config_data.data |= (0b11100 << 4); // MIN_FREQ  = 12 -> 2MHz
 
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_RESET);
-    status |= HAL_SPI_Transmit(LDC_SPI_HANDLE, (uint8_t *)&config_data, sizeof(config_data), 10);
+    status |= App_SpiTransfer(LDC_SPI_HANDLE, (uint8_t *)&config_data, nullptr, sizeof(config_data), 10, 0);
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_SET);
     config_data.data = 0x00; // Default value
 
@@ -85,7 +86,7 @@ HAL_StatusTypeDef LDC1101::init()
     config_data.data |= (0b0 << 1); // SHUTDOWN_EN Disabled
 
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_RESET);
-    status |= HAL_SPI_Transmit(LDC_SPI_HANDLE, (uint8_t *)&config_data, sizeof(config_data), 10);
+    status |= App_SpiTransfer(LDC_SPI_HANDLE, (uint8_t *)&config_data, nullptr, sizeof(config_data), 10, 0);
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_SET);
     config_data.data = 0x00; // Default value
 
@@ -112,7 +113,7 @@ HAL_StatusTypeDef LDC1101::init()
     config_data.data |= (0b1 << 0); // DOK_REPORT Disabled
 
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_RESET);
-    status |= HAL_SPI_Transmit(LDC_SPI_HANDLE, (uint8_t *)&config_data, sizeof(config_data), 10);
+    status |= App_SpiTransfer(LDC_SPI_HANDLE, (uint8_t *)&config_data, nullptr, sizeof(config_data), 10, 0);
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_SET);
     config_data.data = 0x00; // Default value
 
@@ -148,12 +149,13 @@ void LDC1101::start_measurement()
     config_data.data = (0b0 << 0); // START
 
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_RESET);
-    HAL_SPI_Transmit(LDC_SPI_HANDLE, (uint8_t*)&config_data, sizeof(config_data), 10);
+    App_SpiTransfer(LDC_SPI_HANDLE, (uint8_t*)&config_data, nullptr, sizeof(config_data), 10, 0);
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_SET);
 }
 
 void LDC1101::read_data()
 {
+    this->data_valid = false;
     if(!this->initialized) return; // Don't read data if sensor is not initialized
 
 
@@ -169,7 +171,11 @@ void LDC1101::read_data()
 
     this->data_valid = false;
     HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_RESET);
-    HAL_SPI_TransmitReceive_IT(LDC_SPI_HANDLE, (uint8_t*)&tx_data, (uint8_t*)&(this->rx_data), sizeof(tx_data));
+    const auto status = App_SpiTransfer(LDC_SPI_HANDLE, (uint8_t*)&tx_data,
+        (uint8_t*)&this->rx_data, sizeof(tx_data), 5, 0);
+    HAL_GPIO_WritePin(this->cs_port, this->cs_pin, GPIO_PIN_SET);
+    this->data_valid = status == HAL_OK;
+    if (this->data_valid) this->slip_detector.update(this->rx_data.rp_data);
 }
 
 

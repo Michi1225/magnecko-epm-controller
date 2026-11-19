@@ -11,6 +11,8 @@ cmake_minimum_required(VERSION 3.22)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 
 # Define the build type
@@ -38,6 +40,7 @@ add_executable(${CMAKE_PROJECT_NAME})
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
 
+add_subdirectory(Libs/FreeRTOS-Kernel)
 add_subdirectory(Libs/SOES_Wrapper)
 
 # Link directories setup
@@ -47,6 +50,9 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    Libs/Runtime/app_runtime.cpp
+    Libs/Runtime/rtos_io.cpp
+    Core/Src/stm32h7xx_hal_timebase_tim.c
     Libs/Sensors/BNO086.cpp
     Libs/Sensors/TMAG5273.cpp
     Libs/Sensors/TMF8829.cpp
@@ -65,6 +71,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Libs/Sensors
+    Libs/Runtime
     Libs/FSM
     Libs/Controller
     Drivers/VL53LMZ_ULD_API/Platform
@@ -74,13 +81,16 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 )
 
 # Add project symbols (macros)
+option(EPM_USE_BATTERIES "Use batteries instead of the capacitor charger link" ON)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    EPM_USE_BATTERIES=$<BOOL:${EPM_USE_BATTERIES}>
     # Add user defined symbols
 )
 
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
+    freertos_kernel
     soes
 
     # Add user defined libraries

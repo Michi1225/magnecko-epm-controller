@@ -12,6 +12,7 @@
  #include <cstdint>
  enum class ErrorCodes {
     NO_ERROR = 0x0000,
+    SENSOR_DATA_STALE = 0xFF19,
     OVER_CURRENT = 0x2220,
     OVER_TEMPERATURE = 0x4300,
     SENSOR_INIT_FAILED_IMU = 0xFF01,
