@@ -6,28 +6,17 @@
   * Note original implementation that was taken as example for this was from Vasilious
   */
 #include "FSM.hpp"
-FSM::FSM()
-{
-    states_[FSMStatus::NOT_READY_TO_SWITCH_ON] = std::bind(&FSM::notReadyToSwitchOn,this);
-    states_[FSMStatus::SWITCH_ON_DISABLED] = std::bind(&FSM::switchOnDisabled,this);
-    states_[FSMStatus::READY_TO_SWITCH_ON] = std::bind(&FSM::readyToSwitchOn,this);
-    states_[FSMStatus::SWITCHED_ON] = std::bind(&FSM::switchedOn,this);
-    states_[FSMStatus::OPERATION_ENABLED  ] = std::bind(&FSM::operationEnabled,this);
-    states_[FSMStatus::QUICK_STOP_ACTIVE  ] = std::bind(&FSM::quickStopActive,this);
-    states_[FSMStatus::FAULT_REACTION_ACTIVE] = std::bind(&FSM::faultReactionActive,this);
-    states_[FSMStatus::FAULT    ] = std::bind(&FSM::fault,this);
-}
-
+FSM::FSM() = default;
 
 void FSM::exitFaultReaction()
 {
-    if(state_ == FSMStatus::FAULT_REACTION_ACTIVE) next_state_ = states_[FSMStatus::FAULT];
+    if(state_ == FSMStatus::FAULT_REACTION_ACTIVE) next_state_ = &FSM::fault;
 }
 
 void FSM::triggerFaultReaction(ErrorCodes error_code)
 {
     error_code_ = static_cast<uint16_t>(error_code);
-    next_state_ = states_[FSMStatus::FAULT_REACTION_ACTIVE];
+    next_state_ = &FSM::faultReactionActive;
 }
 
 
@@ -47,7 +36,7 @@ void FSM::setMode(int8_t input)
 void FSM::run()
 {
     if(next_state_)
-        next_state_();
+        (this->*next_state_)();
 
     actions_.background_(state_, status_word_, mode_);
 }
@@ -55,7 +44,7 @@ void FSM::run()
 void FSM::init(const FSMActions &actions)
 {
     actions_ = actions;
-    next_state_ = states_[FSMStatus::NOT_READY_TO_SWITCH_ON];
+    next_state_ = &FSM::notReadyToSwitchOn;
     state_ = FSMStatus::NOT_READY_TO_SWITCH_ON;
 }
 
@@ -67,7 +56,7 @@ void FSM::notReadyToSwitchOn()
     status_word_ =   (~FSMStatusWord::MASK & status_word_)  | FSMStatusWord::NOT_READY_TO_SWITCH_ON;
     actions_.notReadyToSwitchOn_(prev_state, status_word_, mode_);
 
-    next_state_ = states_[FSMStatus::SWITCH_ON_DISABLED];
+    next_state_ = &FSM::switchOnDisabled;
     run();
 }
 
@@ -78,7 +67,7 @@ void FSM::switchOnDisabled()
   
     if((control_word_ & FSMBitMask::SHUTDOWN) == FSMCommand::SHUTDOWN)
     {
-        next_state_ = states_[FSMStatus::READY_TO_SWITCH_ON];
+        next_state_ = &FSM::readyToSwitchOn;
         run();
     }
     else
@@ -95,12 +84,12 @@ void FSM::readyToSwitchOn()
 
     if(((control_word_ & FSMBitMask::SWITCH_ON) == FSMCommand::SWITCH_ON) || ((control_word_ & FSMBitMask::ENABLE_OPERATION)== FSMCommand::ENABLE_OPERATION))
     {
-        next_state_ = states_[FSMStatus::SWITCHED_ON];
+        next_state_ = &FSM::switchedOn;
         run();
     }
     else if ((control_word_ & FSMBitMask::DISABLE_VOLTAGE) == FSMCommand::DISABLE_VOLTAGE)
     {
-        next_state_ = states_[FSMStatus::SWITCH_ON_DISABLED];
+        next_state_ = &FSM::switchOnDisabled;
         run();
     }
     else
@@ -119,16 +108,16 @@ void FSM::switchedOn()
     {
         // so at least once its executed...
         actions_.switchedOn_(prev_state, status_word_, mode_);
-        next_state_ = states_[FSMStatus::OPERATION_ENABLED];
+        next_state_ = &FSM::operationEnabled;
         run();
     } else if ((control_word_ & FSMBitMask::DISABLE_VOLTAGE) == FSMCommand::DISABLE_VOLTAGE)
     {
-        next_state_ = states_[FSMStatus::SWITCH_ON_DISABLED];
+        next_state_ = &FSM::switchOnDisabled;
         run();
     }
     else if ((control_word_ & FSMBitMask::SHUTDOWN) == FSMCommand::SHUTDOWN)
     {
-        next_state_ = states_[FSMStatus::READY_TO_SWITCH_ON];
+        next_state_ = &FSM::readyToSwitchOn;
         run();
     }
     else
@@ -145,21 +134,21 @@ void FSM::operationEnabled()
 
     if((control_word_ & FSMBitMask::QUICK_STOP) == FSMCommand::QUICK_STOP)
     {
-        next_state_ = states_[FSMStatus::QUICK_STOP_ACTIVE];
+        next_state_ = &FSM::quickStopActive;
         run();
     } else if ((control_word_ & FSMBitMask::DISABLE_OPERATION) == FSMCommand::DISABLE_OPERATION)
     {
-        next_state_ = states_[FSMStatus::SWITCHED_ON];
+        next_state_ = &FSM::switchedOn;
         run();
     }
     else if ((control_word_ & FSMBitMask::SHUTDOWN) == FSMCommand::SHUTDOWN)
     {
-        next_state_ = states_[FSMStatus::READY_TO_SWITCH_ON];
+        next_state_ = &FSM::readyToSwitchOn;
         run();
     }
     else if ((control_word_ & FSMBitMask::DISABLE_VOLTAGE) == FSMCommand::DISABLE_VOLTAGE)
     {
-        next_state_ = states_[FSMStatus::SWITCH_ON_DISABLED];
+        next_state_ = &FSM::switchOnDisabled;
         run();
     }
     else
@@ -176,12 +165,12 @@ void FSM::quickStopActive()
 
     if((control_word_ & FSMBitMask::DISABLE_VOLTAGE) == FSMCommand::DISABLE_VOLTAGE)
     {
-        next_state_ = states_[FSMStatus::SWITCH_ON_DISABLED];
+        next_state_ = &FSM::switchOnDisabled;
         run();
     }
     else if ((control_word_ & FSMBitMask::ENABLE_OPERATION) == FSMCommand::ENABLE_OPERATION)
     {
-        next_state_ = states_[FSMStatus::OPERATION_ENABLED];
+        next_state_ = &FSM::operationEnabled;
         run();
     }
     else
@@ -208,7 +197,7 @@ void FSM::fault()
 
     if((control_word_ & FSMBitMask::FAULT_RESET) == FSMCommand::FAULT_RESET)
     {
-        next_state_ = states_[FSMStatus::SWITCH_ON_DISABLED];
+        next_state_ = &FSM::switchOnDisabled;
         run();
     }
     else

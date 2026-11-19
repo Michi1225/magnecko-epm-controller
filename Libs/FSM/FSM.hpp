@@ -8,7 +8,7 @@
  #pragma once
 
  #include "FSMTypes.hpp"
- #include <map>
+
  #include <cstdint>
  enum class ErrorCodes {
     NO_ERROR = 0x0000,
@@ -58,13 +58,14 @@ public:
     uint16_t error_code_ = 0;
 private:
     FSMActions actions_;
-    std::map<FSMStatus,std::function<void(void)>> states_;
-    FSMStatus state_;
-    uint16_t control_word_;
-    uint16_t status_word_;
-    int8_t mode_;
 
-    std::function<void(void)> next_state_;
+    FSMStatus state_ = FSMStatus::NOT_READY_TO_SWITCH_ON;
+    uint16_t control_word_ = 0;
+    uint16_t status_word_ = 0;
+    int8_t mode_ = 0;
+
+    using StateAction = void (FSM::*)();
+    StateAction next_state_ = nullptr;
     /* State functions declarations */
     void notReadyToSwitchOn();
 

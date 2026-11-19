@@ -416,15 +416,8 @@ FSMStatus FootController::FSM_bg(FSMStatus state, uint16_t &status_word, int8_t 
     
     // Force Estimation
     float current_estimate = this->force_estimation();
-    this->force_average.push_back(current_estimate);
-    if(this->force_average.size() > FORCE_ESTIMATE_WINDOW_SIZE) this->force_average.pop_front();
-    float mag_force_average_sum = 0.0f;
-    for(auto &val : this->force_average)
-    {
-        mag_force_average_sum += val;
-    }
-
-    Obj.Force_Estimate = mag_force_average_sum / this->force_average.size() * (slip_off_votes < 3 ? 1.0f : 0.0f);
+    Obj.Force_Estimate = this->force_average.add(current_estimate) *
+        (slip_off_votes < 3 ? 1.0f : 0.0f);
     //TODO: Implement slip detection for improved force estimation
 
     // Capacitor Voltage

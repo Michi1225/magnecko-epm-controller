@@ -11,7 +11,7 @@
 #include "utils.h"
 #include "Charger.h"
 #include "eeprom.h"
-#include <deque>
+#include "MovingAverage.h"
 #include "version.h"
 extern "C" {
     #include "ecat_slv.h"
@@ -165,7 +165,7 @@ public:
     TMAG5273 hall2 = TMAG5273(TMAG5273::C1);
     TMAG5273 hall3 = TMAG5273(TMAG5273::D1);
     uint8_t contact_estimation = 0;
-    std::deque<float> force_average;
+    MovingAverage<FORCE_ESTIMATE_WINDOW_SIZE> force_average;
     bool slip_detected = false;
 
 
